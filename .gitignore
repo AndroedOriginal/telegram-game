@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment / secrets
+.env
+.venv/
+venv/
+
+# Persistent game database
+*.sqlite3
+*.db
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store

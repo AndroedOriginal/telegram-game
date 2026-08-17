@@ -1,0 +1,189 @@
+# Chess Royale
+
+Chess Royale is a free-for-all, chess-themed multiplayer game played inside a
+Telegram topic. There are no teams: every player controls exactly one piece
+on a standard 8×8 board, and pieces get stronger over time by reaching
+**evolution points** left behind by other players.
+
+```
+Pawn → Bishop → Knight → Rook → Queen
+```
+
+The last surviving player wins. If every remaining player has evolved to
+the *same* piece type, the game ends in a draw.
+
+This repository contains a complete, testable implementation: a pure-Python
+game engine, a Telegram bot UI built with
+[python-telegram-bot](https://python-telegram-bot.org/) (async, v22), custom
+Telegram emoji rendering, SQLite persistence, and an automated test suite.
+
+## How the game works
+
+- **Board.** Always exactly 8×8, rendered with Telegram custom/premium emoji
+  (never plain Unicode squares) — column letters (A–H) and row numbers
+  (1–8) are shown as a header/side using the same custom emoji.
+- **Spawns are evolution points.** Every player's starting square becomes a
+  permanent *spawn* object owned by that player. Any other player who
+  reaches a spawn immediately evolves; the spawn then teleports to a new
+  random empty square. A player can **not** use their own spawn for a free
+  evolution — until another player has used it first. After that, the
+  owner may also use it (forever, even after it relocates).
+- **Movement**
+  - *Pawn* — one square up/down/left/right. Diagonals are attack-only: a
+    pawn can move diagonally only to eliminate an enemy piece sitting
+    there, and it does **not** relocate onto that square.
+  - *Bishop / Rook / Queen* — classic chess sliding movement in their usual
+    directions, any distance, blocked by other pieces.
+  - *Knight* — jumps like a chess knight, but only 4 fixed jumps are
+    exposed as buttons (one per diagonal quadrant) for a compact one-hand
+    mobile control scheme. Knight *attacks* (for check detection) still
+    use the full classic 8-square L-shape geometry.
+  - A player can never land on an occupied square (the pawn diagonal
+    attack is the only exception).
+- **Check is lethal, not a restriction.** You *may* move into an opponent's
+  attack range — but if your piece is under attack right after your move,
+  you are eliminated immediately. If two pieces end up attacking each
+  other, whoever moved **last** into that state is the one who dies.
+- **Turns.** Turn order is shuffled once at game start and then proceeds
+  cyclically, skipping eliminated/left players. Only the active player's
+  button presses do anything; everyone else's taps are silently ignored.
+- **Controls.** Direction first, then distance (for sliding pieces) — no
+  chess notation required:
+
+  ```
+  [⬅️][➡️][⬆️][⬇️][↖️][↗️][↙️][↘️]
+  ```
+
+  Choosing a sliding-piece direction opens a second message with only the
+  legal distances for that direction (e.g. `[1️⃣][2️⃣][3️⃣]`).
+
+## Project structure
+
+```
+telegram-game/
+├── bot/
+│   ├── config.py            # env-based configuration (no secrets in code)
+│   ├── emoji_assets.py      # the ONLY place custom emoji ids are listed
+│   ├── callback_data.py     # compact callback_data encode/decode
+│   ├── manager.py           # in-memory + SQLite-backed game registry
+│   ├── game/                # pure Python game engine (no Telegram imports)
+│   │   ├── models.py        # enums & dataclasses (Player, Spawn, GameState...)
+│   │   ├── board.py         # 8x8 geometry, cell coloring
+│   │   ├── movement.py      # legal destinations per piece type
+│   │   ├── attacks.py       # attack-area geometry / check detection
+│   │   ├── evolution.py     # evolution order + spawn-usage rules
+│   │   ├── spawns.py        # random valid spawn placement/relocation
+│   │   ├── rules.py         # draw/victory detection + RU announcements
+│   │   └── engine.py        # orchestrates the full move/lobby lifecycle
+│   ├── rendering/
+│   │   ├── board_renderer.py  # board -> Telegram HTML with <tg-emoji>
+│   │   └── messages.py        # all other RU UI strings
+│   ├── database/
+│   │   ├── db.py             # SQLite connection/schema
+│   │   └── repository.py     # GameState <-> JSON (de)serialization
+│   └── handlers/
+│       ├── lobby.py          # /chessroyale, join/leave/start callbacks
+│       ├── game.py           # move callbacks, board/info message updates
+│       ├── callbacks.py      # single CallbackQueryHandler dispatcher
+│       └── keyboards.py      # InlineKeyboardMarkup builders
+├── tests/                    # pytest suite for the game engine & persistence
+├── main.py                   # bot entry point
+├── requirements.txt
+├── requirements-dev.txt
+├── .env.example
+└── .gitignore
+```
+
+The game engine (`bot/game/`) never imports anything from `telegram`; it can
+be tested and reasoned about in complete isolation. `bot/handlers/` is the
+only layer that talks to the Telegram Bot API.
+
+## Custom emoji assets
+
+All Telegram custom/premium emoji IDs used by the board renderer live in
+`bot/emoji_assets.py` and nowhere else. Each entry pairs a custom emoji id
+with a plain-Unicode placeholder character, and rendering uses Telegram's
+`<tg-emoji emoji-id="...">placeholder</tg-emoji>` HTML tag (sent with
+`parse_mode=HTML`) so no manual UTF-16 offset math is needed.
+
+## Installation
+
+Requires **Python 3.11+**.
+
+```bash
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# Linux/macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+| Variable              | Description                                                                 |
+|-----------------------|-------------------------------------------------------------------------------|
+| `TELEGRAM_BOT_TOKEN`  | Bot token from [@BotFather](https://t.me/BotFather). **Required.**            |
+| `TELEGRAM_CHAT_ID`    | Numeric id of the chat the bot should operate in. Leave empty to allow any chat. |
+| `TELEGRAM_TOPIC_ID`   | `message_thread_id` of the "Chess Royale" forum topic. Optional.              |
+| `DATABASE_PATH`       | Path to the SQLite file used for persistence (default `chess_royale.sqlite3`). |
+
+Never commit your real `.env` file, bot token, or the SQLite database — they
+are excluded via `.gitignore`.
+
+## Running the bot
+
+```bash
+python main.py
+```
+
+Inside the configured chat/topic, use:
+
+- `/chessroyale` (or `/newgame`) — open a new lobby with rules, a
+  join/leave panel, and a start button.
+- `/leave` — leave an active game you are currently playing in.
+
+Every game is keyed by `(chat_id, topic_id)`, so multiple independent games
+can run simultaneously in different topics/chats.
+
+## Running tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The suite covers pawn/bishop/knight/rook/queen movement, blockers and
+occupied-cell rules, attack detection, death-by-check (including mutual
+attacks and "last move" priority), evolution and the full spawn-activation
+lifecycle (owner restriction, activation by another player, permanent
+unlock, relocation), draw/victory detection, players leaving, invalid
+moves, turn restrictions, stale/replayed callback rejection, and SQLite
+persistence round-trips.
+
+## Design notes / deliberate interpretations
+
+A few points in the spec needed a concrete, minimal, gameplay-preserving
+choice:
+
+- **Pawn+Pawn is never a draw.** Every game starts with all players as
+  pawns, so a literal "all remaining players share a piece type" check
+  would end every game before move one. The draw rule is applied to every
+  *evolved* piece type (Bishop, Knight, Rook, Queen — matching all of the
+  spec's own examples) but not to Pawn.
+- **Knight buttons vs. knight attacks.** The four diagonal buttons each
+  perform one fixed classic knight jump (not all 8 are reachable by
+  button, for a compact one-hand control scheme), but check/attack
+  detection for knights still uses the full 8-square classic geometry, as
+  the spec explicitly requires "original chess" attack geometry.
+- **Pawn diagonal attacks don't relocate the attacker.** The attacking pawn
+  eliminates the enemy in place; its own square is then re-checked for
+  danger exactly like any other move, so an attacker can still die if a
+  third player already threatens its square.
