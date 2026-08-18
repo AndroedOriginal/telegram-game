@@ -106,15 +106,6 @@ ROW_LABEL_ID = {
 
 AT_SYMBOL_ID = "5458830526146157735"
 
-# ---------------------------------------------------------------------------
-# Board-screen divider (one custom emoji after the last board row, not a cell)
-# ---------------------------------------------------------------------------
-
-# Must be a real document id from this pack. A fabricated id makes Telegram
-# reject the whole board message with Document_invalid.
-DIVIDER_ID = EMPTY_CELL_ID["white"]
-DIVIDER_PLACEHOLDER = LABEL_PLACEHOLDER
-
 
 class EmojiRef(NamedTuple):
     """A placeholder character paired with the custom emoji id it maps to."""
@@ -154,12 +145,6 @@ def row_label(digit: str) -> EmojiRef:
 
 def at_symbol() -> EmojiRef:
     return EmojiRef(LABEL_PLACEHOLDER, AT_SYMBOL_ID)
-
-
-def divider() -> EmojiRef:
-    """Custom-emoji divider used once after the last row of the board."""
-
-    return EmojiRef(DIVIDER_PLACEHOLDER, DIVIDER_ID)
 
 
 def all_custom_emoji_ids() -> frozenset[str]:

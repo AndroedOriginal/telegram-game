@@ -22,8 +22,8 @@ Telegram emoji rendering, SQLite persistence, and an automated test suite.
 - **Board.** Always exactly 8×8, rendered with Telegram custom/premium emoji
   (never plain Unicode squares) — column letters (A–H) and row numbers
   (1–8) are shown as a header/side using the same custom emoji. The board
-  message is the original custom-emoji screen with a single divider emoji
-  after the last board row (no quote).
+  message is a rich Heading 6 (`<h6>`) wrapping the original custom-emoji
+  screen (no divider, no quote). **Ходы:** stays a separate message below.
 - **Spawns are evolution points.** Every player's starting square becomes a
   permanent *spawn* object owned by that player (identity is the owner, not
   the coordinate). A player cannot evolve on their **own** spawn at first.
@@ -106,8 +106,9 @@ only layer that talks to the Telegram Bot API.
 All Telegram custom/premium emoji IDs used by the board renderer live in
 `bot/emoji_assets.py` and nowhere else. Each entry pairs a custom emoji id
 with a plain-Unicode placeholder character, and rendering uses Telegram's
-`<tg-emoji emoji-id="...">placeholder</tg-emoji>` HTML tag (sent with
-`parse_mode=HTML`) so no manual UTF-16 offset math is needed.
+`<tg-emoji emoji-id="...">placeholder</tg-emoji>` HTML tag inside a
+rich-message Heading 6 (`sendRichMessage` / `editMessageText` with
+`InputRichMessage.html`), so no manual UTF-16 offset math is needed.
 
 ## Installation
 

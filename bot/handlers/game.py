@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 from ..callback_data import DirectionCallback, DistanceCallback, GameButtonCallback
 from ..game import engine
 from ..game.models import GameState, GameStatus
-from ..rendering.board_renderer import render_board
+from ..rendering.board_renderer import board_rich_message_payload
 from ..rendering.messages import (
     RULES_ALERT,
     distance_prompt_text,
@@ -123,23 +123,35 @@ async def update_info_message(bot: Bot, state: GameState) -> None:
         _track(state, msg)
 
 
+def _api_message_id(result) -> int | None:
+    if result is None:
+        return None
+    if isinstance(result, dict):
+        return result.get("message_id")
+    return getattr(result, "message_id", None)
+
+
 async def update_board_message(bot: Bot, state: GameState) -> None:
-    html = render_board(state)
+    rich_message = board_rich_message_payload(state)
+    html = rich_message["html"]
     logger.info(
-        "Updating board message chat=%s topic=%s existing_id=%s html_len=%s",
+        "Updating board message chat=%s topic=%s existing_id=%s html_len=%s heading6=%s",
         state.chat_id,
         state.topic_id,
         state.board_message_id,
         len(html),
+        html.startswith("<h6>") and html.endswith("</h6>"),
     )
     if state.board_message_id is not None:
         try:
             await telegram_retry(
-                lambda: bot.edit_message_text(
-                    chat_id=state.chat_id,
-                    message_id=state.board_message_id,
-                    text=html,
-                    parse_mode=ParseMode.HTML,
+                lambda: bot._post(
+                    "editMessageText",
+                    {
+                        "chat_id": state.chat_id,
+                        "message_id": state.board_message_id,
+                        "rich_message": rich_message,
+                    },
                 )
             )
             return
@@ -148,23 +160,26 @@ async def update_board_message(bot: Bot, state: GameState) -> None:
             state.board_message_id = None
 
     try:
-        msg = await telegram_retry(
-            lambda: bot.send_message(
-                chat_id=state.chat_id,
-                message_thread_id=state.topic_id,
-                text=html,
-                parse_mode=ParseMode.HTML,
+        result = await telegram_retry(
+            lambda: bot._post(
+                "sendRichMessage",
+                {
+                    "chat_id": state.chat_id,
+                    "message_thread_id": state.topic_id,
+                    "rich_message": rich_message,
+                },
             )
         )
     except BadRequest as exc:
-        logger.exception("Could not send board message: %s", exc)
+        logger.exception("Could not send board rich message: %s", exc)
         return
-    if msg is not None:
-        state.board_message_id = msg.message_id
-        _track(state, msg)
-        logger.info("Board message created id=%s", msg.message_id)
+    message_id = _api_message_id(result)
+    if message_id is not None:
+        state.board_message_id = message_id
+        state.track_message(message_id)
+        logger.info("Board message created id=%s", message_id)
     else:
-        logger.error("Board message send returned no message")
+        logger.error("Board message send returned no message_id: %r", result)
 
 
 async def update_moves_message(bot: Bot, state: GameState) -> None:

@@ -5,7 +5,6 @@ import asyncio
 import random
 from dataclasses import dataclass, field
 
-from bot.emoji_assets import divider
 from bot.game import engine
 from bot.game.models import (
     DIRECTION_EMOJI,
@@ -16,7 +15,7 @@ from bot.game.models import (
 )
 from bot.handlers import game as game_handlers
 from bot.handlers.keyboards import DIRECTION_ORDER
-from bot.rendering.board_renderer import render_board
+from bot.rendering.board_renderer import render_board_heading6_html
 from bot.rendering.messages import distance_prompt_text, moves_prompt_text
 
 
@@ -32,6 +31,7 @@ class FakeBot:
     sent: list[FakeMessage] = field(default_factory=list)
     edited: list[tuple[int, str, object]] = field(default_factory=list)
     deleted: list[int] = field(default_factory=list)
+    posted: list[tuple[str, dict]] = field(default_factory=list)
     _next_id: int = 1
 
     async def send_message(self, chat_id, text, **kwargs):
@@ -54,6 +54,28 @@ class FakeBot:
     async def delete_messages(self, chat_id, message_ids):
         self.deleted.extend(message_ids)
 
+    async def _post(self, endpoint, data=None, **kwargs):
+        payload = dict(data or {})
+        self.posted.append((endpoint, payload))
+        rich = payload.get("rich_message") or {}
+        html = rich.get("html", "")
+        if endpoint == "sendRichMessage":
+            msg = FakeMessage(self._next_id, html)
+            self._next_id += 1
+            self.sent.append(msg)
+            return {
+                "message_id": msg.message_id,
+                "rich_message": {"blocks": [{"type": "heading", "size": 6}]},
+            }
+        if endpoint == "editMessageText":
+            message_id = payload["message_id"]
+            self.edited.append((message_id, html, None))
+            return {
+                "message_id": message_id,
+                "rich_message": {"blocks": [{"type": "heading", "size": 6}]},
+            }
+        raise AssertionError(f"unexpected Bot API method {endpoint}")
+
 
 def _started_state() -> GameState:
     state = GameState(game_id=1, chat_id=-100, topic_id=7, status=GameStatus.LOBBY)
@@ -66,6 +88,19 @@ def _started_state() -> GameState:
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _assert_heading6_board(html: str, state: GameState) -> None:
+    expected = render_board_heading6_html(state)
+    assert html == expected
+    assert html.startswith("<h6>")
+    assert html.endswith("</h6>")
+    assert html.count("<h6>") == 1
+    assert "######" not in html
+    assert "<blockquote" not in html
+    assert "<hr" not in html
+    assert html.count("<tg-emoji") == 9 * 9
+    assert html.count("<br/>") == 8
 
 
 def test_starting_a_game_creates_separate_board_and_moves_messages():
@@ -83,14 +118,13 @@ def test_starting_a_game_creates_separate_board_and_moves_messages():
     assert "Информация по игре" in info.text
     assert info.reply_markup is not None
 
-    lines = board.text.split("\n")
-    assert lines[0] != divider().to_html()
-    assert lines[-1] == divider().to_html()
-    assert board.text.count(divider().to_html()) == 1
-    assert "<blockquote" not in board.text
-    assert len(lines) == 10
-    assert board.text.count("<tg-emoji") == 9 * 9 + 1
+    _assert_heading6_board(board.text, state)
     assert board.reply_markup is None
+    assert bot.posted[0][0] == "sendRichMessage"
+    rich = bot.posted[0][1]["rich_message"]
+    assert rich["html"].startswith("<h6>")
+    assert rich["skip_entity_detection"] is True
+    assert "######" not in rich["html"]
 
     assert moves.text == moves_prompt_text()
     assert moves.text == "Ходы:"
@@ -129,9 +163,8 @@ def test_board_updates_after_a_move_and_moves_message_is_reused():
     assert board_id in edited_ids
     assert moves_id in edited_ids
     board_edits = [text for mid, text, _ in bot.edited if mid == board_id]
-    assert board_edits[-1] == render_board(state)
-    assert board_edits[-1].endswith("\n" + divider().to_html())
-    assert not board_edits[-1].startswith(divider().to_html())
+    _assert_heading6_board(board_edits[-1], state)
+    assert any(endpoint == "editMessageText" for endpoint, _ in bot.posted)
 
 
 def test_distance_prompt_does_not_replace_moves_message():
