@@ -55,25 +55,28 @@ def test_render_board_uses_tg_emoji_tags_not_raw_letters_as_entities():
     assert "A" not in square
 
 
-def test_board_message_starts_with_exactly_one_divider_and_is_not_quoted():
+def test_board_message_ends_with_exactly_one_divider_and_is_not_quoted():
     html = render_board(_sample_state())
     lines = html.split("\n")
     divider_html = divider().to_html()
 
-    assert lines[0] == divider_html
+    assert lines[0] != divider_html
+    assert lines[-1] == divider_html
     assert html.count(divider_html) == 1
+    assert html.endswith(divider_html)
     assert "<blockquote" not in html
     assert "expandable" not in html
-    assert len(lines) == 10  # divider, A–H header, 8 board rows
-    assert divider_html not in "\n".join(lines[1:])
-    assert all("<tg-emoji" in line for line in lines[1:])
+    assert len(lines) == 10  # A–H header, 8 board rows, trailing divider
+    assert divider_html not in "\n".join(lines[:-1])
+    assert all("<tg-emoji" in line for line in lines[:-1])
 
 
 def test_render_board_accepts_an_injected_divider_without_changing_cells():
-    injected = EmojiRef("\u2796", "1111111111111111111")
+    injected = EmojiRef(LABEL_PLACEHOLDER, "1111111111111111111")
     html = render_board(_sample_state(), divider=injected)
-    assert html.startswith(injected.to_html() + "\n")
+    assert html.endswith("\n" + injected.to_html())
     assert html.count(injected.to_html()) == 1
+    assert not html.startswith(injected.to_html())
     assert "<blockquote" not in html
     square = render_square(Position.from_algebraic("A8"), _sample_state())
     assert injected.to_html() not in square

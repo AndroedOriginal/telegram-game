@@ -41,13 +41,12 @@ def render_square(position: Position, state: GameState) -> str:
 def render_board(state: GameState, divider: EmojiRef | None = None) -> str:
     """Render the full board message text (HTML, custom emoji).
 
-    The screen is the original board (header + 8 rows) with exactly one
-    divider custom emoji inserted as the first line. Cell rendering is
-    unchanged; the divider is not part of ``render_square``.
+    The screen is the original board (header + 8 rows), then exactly one
+    divider custom emoji as the last line. Cell rendering is unchanged;
+    the divider is not part of ``render_square``.
     """
 
-    screen_divider = default_divider() if divider is None else divider
-    lines: list[str] = [screen_divider.to_html()]
+    lines: list[str] = []
 
     header = "".join(column_label(letter).to_html() for letter in "ABCDEFGH")
     header += at_symbol().to_html()
@@ -58,4 +57,6 @@ def render_board(state: GameState, divider: EmojiRef | None = None) -> str:
         cells += row_label(str(row)).to_html()
         lines.append(cells)
 
+    screen_divider = default_divider() if divider is None else divider
+    lines.append(screen_divider.to_html())
     return "\n".join(lines)

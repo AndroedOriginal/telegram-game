@@ -23,7 +23,7 @@ Telegram emoji rendering, SQLite persistence, and an automated test suite.
   (never plain Unicode squares) — column letters (A–H) and row numbers
   (1–8) are shown as a header/side using the same custom emoji. The board
   message is the original custom-emoji screen with a single divider emoji
-  inserted as the first line (no quote).
+  after the last board row (no quote).
 - **Spawns are evolution points.** Every player's starting square becomes a
   permanent *spawn* object owned by that player (identity is the owner, not
   the coordinate). A player cannot evolve on their **own** spawn at first.

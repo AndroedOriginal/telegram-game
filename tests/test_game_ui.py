@@ -84,7 +84,8 @@ def test_starting_a_game_creates_separate_board_and_moves_messages():
     assert info.reply_markup is not None
 
     lines = board.text.split("\n")
-    assert lines[0] == divider().to_html()
+    assert lines[0] != divider().to_html()
+    assert lines[-1] == divider().to_html()
     assert board.text.count(divider().to_html()) == 1
     assert "<blockquote" not in board.text
     assert len(lines) == 10
@@ -129,7 +130,8 @@ def test_board_updates_after_a_move_and_moves_message_is_reused():
     assert moves_id in edited_ids
     board_edits = [text for mid, text, _ in bot.edited if mid == board_id]
     assert board_edits[-1] == render_board(state)
-    assert board_edits[-1].startswith(divider().to_html() + "\n")
+    assert board_edits[-1].endswith("\n" + divider().to_html())
+    assert not board_edits[-1].startswith(divider().to_html())
 
 
 def test_distance_prompt_does_not_replace_moves_message():
