@@ -11,12 +11,16 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from ..callback_data import (
+    DRAW,
     LOBBY_JOIN,
     LOBBY_LEAVE,
     LOBBY_START,
+    QUIT,
+    RULES,
     CallbackParseError,
     DirectionCallback,
     DistanceCallback,
+    GameButtonCallback,
     LobbyCallback,
     decode,
 )
@@ -53,6 +57,15 @@ async def on_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             elif callback.kind == LOBBY_START:
                 await lobby_handlers.handle_start(update, context, callback.game_id)
             else:  # pragma: no cover - defensive
+                await query.answer()
+        elif isinstance(callback, GameButtonCallback):
+            if callback.kind == RULES:
+                await game_handlers.process_rules(update, context, callback)
+            elif callback.kind == QUIT:
+                await game_handlers.process_quit(update, context, callback)
+            elif callback.kind == DRAW:
+                await game_handlers.process_draw(update, context, callback)
+            else:
                 await query.answer()
         elif isinstance(callback, DistanceCallback):
             await game_handlers.process_distance(update, context, callback)

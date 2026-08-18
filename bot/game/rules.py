@@ -5,23 +5,11 @@ from .models import PieceType, Player
 
 
 def check_draw(active_players: list[Player]) -> bool:
-    """A draw occurs when 2+ players remain and they all share the same
-    piece type (section 22).
-
-    The shared-Pawn case is intentionally excluded: every game starts with
-    all players as pawns, so treating that as a draw would end every game
-    before a single move is made. All of the spec's own examples (Bishop,
-    Knight) involve evolved pieces, so this is the smallest safe reading
-    that preserves the intended "everyone converged to the same evolved
-    tier" draw condition without breaking normal play.
-    """
+    """Automatic draw only when every remaining alive player is a Queen."""
 
     if len(active_players) < 2:
         return False
-    piece_types = {p.piece_type for p in active_players}
-    if piece_types == {PieceType.PAWN}:
-        return False
-    return len(piece_types) == 1
+    return all(p.piece_type == PieceType.QUEEN for p in active_players)
 
 
 def check_victory(active_players: list[Player]) -> Player | None:
@@ -60,3 +48,15 @@ def check_announcement(attacker: Player, victim: Player) -> str:
 
 def game_start_announcement() -> str:
     return "\U0001f508 Игра начинается."
+
+
+def rules_view_announcement(player: Player) -> str:
+    return f"\U0001f508 {player.mention} смотрит правила."
+
+
+def draw_vote_announcement(proposer: Player, votes: int, total: int) -> str:
+    return f"\U0001f508 {proposer.mention} предлагает ничью({votes}/{total})"
+
+
+def impossible_move_announcement() -> str:
+    return "ход невозможен."

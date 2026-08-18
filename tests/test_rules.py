@@ -11,14 +11,29 @@ def make_player(user_id, piece_type, username=None):
     )
 
 
-def test_draw_when_all_same_piece_type():
+def test_draw_when_all_same_piece_type_is_not_automatic():
     players = [make_player(1, PieceType.BISHOP), make_player(2, PieceType.BISHOP)]
-    assert check_draw(players) is True
+    assert check_draw(players) is False
 
 
-def test_draw_with_three_knights():
+def test_draw_with_three_knights_is_not_automatic():
     players = [make_player(i, PieceType.KNIGHT) for i in range(3)]
+    assert check_draw(players) is False
+
+
+def test_queen_queen_is_automatic_draw():
+    players = [make_player(1, PieceType.QUEEN), make_player(2, PieceType.QUEEN)]
     assert check_draw(players) is True
+
+
+def test_three_queens_is_automatic_draw():
+    players = [make_player(i, PieceType.QUEEN) for i in range(3)]
+    assert check_draw(players) is True
+
+
+def test_queen_plus_rook_is_not_draw():
+    players = [make_player(1, PieceType.QUEEN), make_player(2, PieceType.ROOK)]
+    assert check_draw(players) is False
 
 
 def test_no_draw_when_piece_types_differ():

@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import logging
 
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from bot.config import config
 from bot.handlers.callbacks import on_callback_query
-from bot.handlers.game import cmd_leave_game
-from bot.handlers.lobby import cmd_new_game
+from bot.handlers.game import cmd_leave_game, on_player_chat
+from bot.handlers.lobby import cmd_new_game, cmd_restart
 from bot.manager import GameManager
 
 logging.basicConfig(
@@ -28,8 +28,10 @@ def build_application() -> Application:
     application.bot_data["manager"] = GameManager(config.database_path)
 
     application.add_handler(CommandHandler(["chessroyale", "newgame"], cmd_new_game))
+    application.add_handler(CommandHandler("restart", cmd_restart))
     application.add_handler(CommandHandler("leave", cmd_leave_game))
     application.add_handler(CallbackQueryHandler(on_callback_query))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_player_chat))
 
     return application
 

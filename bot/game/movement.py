@@ -73,8 +73,8 @@ def pawn_attack_target(position: Position, direction: Direction) -> Position | N
 def knight_jump_destination(
     position: Position, direction: Direction, occupied: set[Position]
 ) -> Position | None:
-    """Return the fixed knight-jump destination for one of the four
-    diagonal quadrant buttons, or ``None`` if illegal."""
+    """Return the fixed knight-jump destination for one of the eight
+    direction buttons, or ``None`` if illegal."""
 
     vector = KNIGHT_JUMP_VECTORS.get(direction)
     if vector is None:
@@ -93,7 +93,7 @@ def legal_directions_for_piece(piece_type: PieceType) -> tuple[Direction, ...]:
     if piece_type == PieceType.BISHOP:
         return DIAGONAL_DIRECTIONS
     if piece_type == PieceType.KNIGHT:
-        return DIAGONAL_DIRECTIONS
+        return CARDINAL_DIRECTIONS + DIAGONAL_DIRECTIONS
     if piece_type == PieceType.ROOK:
         return CARDINAL_DIRECTIONS
     if piece_type == PieceType.QUEEN:

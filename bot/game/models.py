@@ -91,17 +91,16 @@ DIAGONAL_DIRECTIONS = (
     Direction.DOWN_RIGHT,
 )
 
-# The knight only exposes 4 movement buttons (one per diagonal quadrant).
-# Each button performs one fixed L-shaped jump. This is a deliberate design
-# choice for a compact one-hand mobile control scheme (see section 13 of the
-# spec): only half of the 8 classic knight destinations are reachable by a
-# single button, but knight *attack* geometry (used for check detection)
-# still uses the full classic 8-square L-shape (see attacks.py).
+# Each of the eight direction buttons maps to one classic knight L-jump.
 KNIGHT_JUMP_VECTORS: dict[Direction, tuple[int, int]] = {
+    Direction.UP: (1, 2),
     Direction.UP_LEFT: (-1, 2),
-    Direction.UP_RIGHT: (1, 2),
-    Direction.DOWN_LEFT: (-1, -2),
+    Direction.LEFT: (-2, 1),
+    Direction.DOWN_LEFT: (-2, -1),
+    Direction.DOWN: (-1, -2),
     Direction.DOWN_RIGHT: (1, -2),
+    Direction.RIGHT: (2, -1),
+    Direction.UP_RIGHT: (2, 1),
 }
 
 # All 8 classic knight L-shapes, used only for attack/check detection.
@@ -177,8 +176,38 @@ class GameState:
     lobby_message_id: int | None = None
     start_message_id: int | None = None
     distance_message_id: int | None = None
+    announce_message_id: int | None = None
+    moves_message_id: int | None = None
+    last_announcements: list[str] = field(default_factory=list)
+    status_line: str | None = None
+    chat_line: str | None = None
+    showing_rules: bool = False
+    draw_votes: list[int] = field(default_factory=list)
+    draw_proposer_user_id: int | None = None
+    tracked_message_ids: list[int] = field(default_factory=list)
     winner_user_id: int | None = None
     draw_user_ids: list[int] = field(default_factory=list)
+
+    def track_message(self, message_id: int | None) -> None:
+        if message_id is not None and message_id not in self.tracked_message_ids:
+            self.tracked_message_ids.append(message_id)
+
+    def ui_message_ids(self) -> list[int]:
+        ids: list[int] = []
+        for value in (
+            self.info_message_id,
+            self.board_message_id,
+            self.rules_message_id,
+            self.lobby_message_id,
+            self.start_message_id,
+            self.distance_message_id,
+            self.announce_message_id,
+            self.moves_message_id,
+            *self.tracked_message_ids,
+        ):
+            if value is not None and value not in ids:
+                ids.append(value)
+        return ids
 
     def get_player(self, user_id: int) -> Player | None:
         for player in self.players:

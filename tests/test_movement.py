@@ -2,10 +2,12 @@ from bot.game.board import Position
 from bot.game.models import Direction
 from bot.game.movement import (
     knight_jump_destination,
+    legal_directions_for_piece,
     pawn_attack_target,
     pawn_step_destination,
     sliding_destinations,
 )
+from bot.game.models import PieceType
 
 
 def test_pawn_step_cardinal_moves_one_square():
@@ -63,12 +65,20 @@ def test_sliding_destinations_immediately_blocked_is_empty():
     assert sliding_destinations(pos, Direction.UP, occupied) == []
 
 
-def test_knight_jump_destination():
+def test_knight_jump_all_eight_directions():
     pos = Position.from_algebraic("D4")
-    assert knight_jump_destination(pos, Direction.UP_LEFT, set()) == Position.from_algebraic("C6")
-    assert knight_jump_destination(pos, Direction.UP_RIGHT, set()) == Position.from_algebraic("E6")
-    assert knight_jump_destination(pos, Direction.DOWN_LEFT, set()) == Position.from_algebraic("C2")
-    assert knight_jump_destination(pos, Direction.DOWN_RIGHT, set()) == Position.from_algebraic("E2")
+    expected = {
+        Direction.UP: "E6",
+        Direction.UP_LEFT: "C6",
+        Direction.LEFT: "B5",
+        Direction.DOWN_LEFT: "B3",
+        Direction.DOWN: "C2",
+        Direction.DOWN_RIGHT: "E2",
+        Direction.RIGHT: "F3",
+        Direction.UP_RIGHT: "F5",
+    }
+    for direction, algebraic in expected.items():
+        assert knight_jump_destination(pos, direction, set()) == Position.from_algebraic(algebraic)
 
 
 def test_knight_jump_blocked_by_occupied_destination():
@@ -80,3 +90,9 @@ def test_knight_jump_blocked_by_occupied_destination():
 def test_knight_jump_out_of_bounds():
     pos = Position.from_algebraic("A1")
     assert knight_jump_destination(pos, Direction.DOWN_LEFT, set()) is None
+
+
+def test_knight_has_eight_directional_controls_and_no_distance_menu():
+    directions = legal_directions_for_piece(PieceType.KNIGHT)
+    assert set(directions) == set(Direction)
+    assert len(directions) == 8

@@ -148,7 +148,13 @@ Inside the configured chat/topic, use:
 
 - `/chessroyale` (or `/newgame`) — open a new lobby with rules, a
   join/leave panel, and a start button.
+- `/restart` — end the current lobby or match, delete game messages, and
+  open a fresh lobby.
 - `/leave` — leave an active game you are currently playing in.
+
+During an active game the UI is three persistent messages: information
+(with **Правила / Выйти / Ничья**), the board, and **Ходы** (direction
+buttons). Player chat messages are deleted and mirrored into the 💬 line.
 
 Every game is keyed by `(chat_id, topic_id)`, so multiple independent games
 can run simultaneously in different topics/chats.
@@ -164,26 +170,24 @@ The suite covers pawn/bishop/knight/rook/queen movement, blockers and
 occupied-cell rules, attack detection, death-by-check (including mutual
 attacks and "last move" priority), evolution and the full spawn-activation
 lifecycle (owner restriction, activation by another player, permanent
-unlock, relocation), draw/victory detection, players leaving, invalid
-moves, turn restrictions, stale/replayed callback rejection, and SQLite
+unlock, relocation, Queen evolution removing the point), draw votes,
+automatic Queen-draw, victory, leaving, chat mirroring, invalid moves,
+turn restrictions, stale/replayed callback rejection, and SQLite
 persistence round-trips.
 
 ## Design notes / deliberate interpretations
 
-A few points in the spec needed a concrete, minimal, gameplay-preserving
-choice:
-
-- **Pawn+Pawn is never a draw.** Every game starts with all players as
-  pawns, so a literal "all remaining players share a piece type" check
-  would end every game before move one. The draw rule is applied to every
-  *evolved* piece type (Bishop, Knight, Rook, Queen — matching all of the
-  spec's own examples) but not to Pawn.
-- **Knight buttons vs. knight attacks.** The four diagonal buttons each
-  perform one fixed classic knight jump (not all 8 are reachable by
-  button, for a compact one-hand control scheme), but check/attack
-  detection for knights still uses the full 8-square classic geometry, as
-  the spec explicitly requires "original chess" attack geometry.
+- **Automatic draw** happens only when every remaining alive player is a
+  Queen, or when every alive player votes **Ничья**. Same-piece groups of
+  bishops/knights/pawns do not draw by themselves.
+- **Knight controls.** All eight direction buttons map to the eight
+  classic knight L-jumps. There is no distance menu.
 - **Pawn diagonal attacks don't relocate the attacker.** The attacking pawn
   eliminates the enemy in place; its own square is then re-checked for
-  danger exactly like any other move, so an attacker can still die if a
-  third player already threatens its square.
+  danger exactly like any other move.
+- **Rules popup.** Telegram alerts are limited to 200 characters, so the
+  Rules button shows a short alert and also expands the full rules inside
+  the main information message.
+- **Chat cleanup.** On start/restart the bot deletes every message ID it
+  has tracked. It cannot delete arbitrary older history unless it is a
+  group admin and knows those IDs.

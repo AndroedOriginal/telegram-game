@@ -5,35 +5,79 @@ import random
 from typing import Iterable
 
 from .attacks import attacked_squares
-from .board import Position, all_positions, is_adjacent
-from .models import PieceType, Spawn
+from .board import Position, all_positions, cell_color, chebyshev_distance, is_adjacent
+from .models import PieceType, Player, Spawn
 
-MAX_PLACEMENT_ATTEMPTS = 500
+MAX_PLACEMENT_ATTEMPTS = 800
+MIN_SPAWN_SEPARATION = 2
+
+
+def _nearest_neighbor(candidate: Position, others: Iterable[Position]) -> int | None:
+    others = list(others)
+    if not others:
+        return None
+    return min(chebyshev_distance(candidate, other) for other in others)
+
+
+def _max_nearest_allowed(count: int) -> int:
+    if count <= 3:
+        return 5
+    if count <= 5:
+        return 4
+    return 3
+
+
+def _score_spawn_candidate(candidate: Position, others: list[Position]) -> float:
+    nearest = _nearest_neighbor(candidate, others)
+    if nearest is None:
+        return 0.0
+    if nearest < MIN_SPAWN_SEPARATION:
+        return -1000.0
+    max_near = _max_nearest_allowed(len(others) + 1)
+    penalty = 0.0
+    if nearest > max_near:
+        penalty += (nearest - max_near) * 3.0
+    average = sum(chebyshev_distance(candidate, other) for other in others) / len(others)
+    return nearest * 2.0 + average - penalty
 
 
 def find_valid_spawn_position(
     occupied_by_players: Iterable[Position],
     occupied_by_spawns: Iterable[Position],
     rng: random.Random | None = None,
+    required_color: str | None = None,
 ) -> Position:
     """Return a random board cell that does not overlap any player or any
-    other spawn. Retries candidates until a valid one is found.
-
-    Raises ``RuntimeError`` if the board is completely full (should never
-    happen with at most 8 players and 8 spawns on 64 squares).
+    other spawn, is not clustered against other spawns, and optionally
+    matches ``required_color`` ("white" or "black").
     """
 
     rng = rng or random
-    forbidden = set(occupied_by_players) | set(occupied_by_spawns)
-    candidates = [pos for pos in all_positions() if pos not in forbidden]
+    player_set = set(occupied_by_players)
+    spawn_set = set(occupied_by_spawns)
+    forbidden = player_set | spawn_set
+    others = list(spawn_set)
+    candidates = [
+        pos
+        for pos in all_positions()
+        if pos not in forbidden
+        and (required_color is None or cell_color(pos) == required_color)
+    ]
+    if not candidates:
+        # Relax color first, then clustering, rather than fail the game.
+        candidates = [pos for pos in all_positions() if pos not in forbidden]
     if not candidates:
         raise RuntimeError("No valid spawn position available: board is full")
-    for _ in range(MAX_PLACEMENT_ATTEMPTS):
-        candidate = rng.choice(candidates)
-        if candidate not in forbidden:
-            return candidate
-    # Fallback (unreachable in practice given the pre-filtered candidate list).
-    return candidates[0]  # pragma: no cover
+
+    scored: list[tuple[float, Position]] = []
+    sample = candidates if len(candidates) <= 32 else rng.sample(candidates, 32)
+    for candidate in sample:
+        scored.append((_score_spawn_candidate(candidate, others), candidate))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, best = scored[0]
+    if best_score > -1000:
+        return best
+    return rng.choice(candidates)
 
 
 def relocate_spawn(
@@ -41,13 +85,40 @@ def relocate_spawn(
     all_spawns: list[Spawn],
     player_positions: Iterable[Position],
     rng: random.Random | None = None,
+    required_color: str | None = None,
 ) -> None:
     """Move ``spawn`` to a new random valid location, in place."""
 
-    forbidden_spawn_positions = {s.position for s in all_spawns if s is not spawn}
-    forbidden_spawn_positions.add(spawn.position)  # a relocation must land on a new cell
-    new_position = find_valid_spawn_position(player_positions, forbidden_spawn_positions, rng)
+    other_spawn_positions = {s.position for s in all_spawns if s is not spawn}
+    other_spawn_positions.add(spawn.position)
+    new_position = find_valid_spawn_position(
+        player_positions, other_spawn_positions, rng, required_color=required_color
+    )
     spawn.position = new_position
+
+
+def ensure_spawn_color_coverage(
+    spawns: list[Spawn],
+    players: Iterable[Player],
+    rng: random.Random | None = None,
+) -> None:
+    """Guarantee each non-queen alive player has at least one evolution
+    point on the same square color as their piece."""
+
+    rng = rng or random
+    active = [p for p in players if p.is_active and p.position is not None]
+    player_positions = {p.position for p in active}
+
+    for player in active:
+        if player.piece_type == PieceType.QUEEN:
+            continue
+        need = cell_color(player.position)
+        if any(cell_color(spawn.position) == need for spawn in spawns):
+            continue
+        if not spawns:
+            return
+        target = max(spawns, key=lambda spawn: chebyshev_distance(spawn.position, player.position))
+        relocate_spawn(target, spawns, player_positions, rng, required_color=need)
 
 
 def generate_initial_layout(
@@ -57,20 +128,48 @@ def generate_initial_layout(
     players (all start as pawns). Retries until constraints are satisfied:
 
     - no two players share a square;
-    - no two players are adjacent (king-distance <= 1);
-    - no player starts under attack by another player's pawn diagonals.
+    - players must not spawn adjacent to each other;
+    - players must not start under attack;
+    - spawn/player points are reasonably distributed across the board.
     """
 
     rng = rng or random
     all_cells = list(all_positions())
+    best: dict[int, Position] | None = None
+    best_score = float("-inf")
 
     for _ in range(MAX_PLACEMENT_ATTEMPTS):
         candidate_cells = rng.sample(all_cells, len(user_ids))
         positions = dict(zip(user_ids, candidate_cells))
-        if _layout_is_valid(positions):
+        if not _layout_is_valid(positions):
+            continue
+        score = _layout_distribution_score(list(positions.values()))
+        if score > best_score:
+            best = positions
+            best_score = score
+        if score >= 0:
             return positions
 
+    if best is not None:
+        return best
     raise RuntimeError("Failed to generate a valid initial layout")  # pragma: no cover
+
+
+def _layout_distribution_score(values: list[Position]) -> float:
+    if len(values) < 2:
+        return 0.0
+    nearest: list[int] = []
+    for i, pos_a in enumerate(values):
+        nearest.append(min(chebyshev_distance(pos_a, pos_b) for j, pos_b in enumerate(values) if i != j))
+    min_near = min(nearest)
+    max_near = max(nearest)
+    allowed = _max_nearest_allowed(len(values))
+    if min_near < MIN_SPAWN_SEPARATION:
+        return -1000.0
+    penalty = 0.0
+    if max_near > allowed:
+        penalty += (max_near - allowed) * 4.0
+    return float(min_near) + (sum(nearest) / len(nearest)) - penalty
 
 
 def _layout_is_valid(positions: dict[int, Position]) -> bool:

@@ -17,6 +17,9 @@ LOBBY_LEAVE = "ll"
 LOBBY_START = "ls"
 DIRECTION = "dir"
 DISTANCE = "dst"
+RULES = "ru"
+QUIT = "qt"
+DRAW = "dv"
 
 
 class CallbackParseError(ValueError):
@@ -44,6 +47,13 @@ class DistanceCallback:
     distance: int
 
 
+@dataclass
+class GameButtonCallback:
+    kind: str
+    game_id: int
+    move_seq: int
+
+
 def encode_lobby(kind: str, game_id: int) -> str:
     return f"{kind}:{game_id}"
 
@@ -56,7 +66,11 @@ def encode_distance(game_id: int, move_seq: int, direction: Direction, distance:
     return f"{DISTANCE}:{game_id}:{move_seq}:{direction.value}:{distance}"
 
 
-def decode(data: str) -> "LobbyCallback | DirectionCallback | DistanceCallback":
+def encode_game_button(kind: str, game_id: int, move_seq: int) -> str:
+    return f"{kind}:{game_id}:{move_seq}"
+
+
+def decode(data: str) -> "LobbyCallback | DirectionCallback | DistanceCallback | GameButtonCallback":
     parts = data.split(":")
     if not parts:
         raise CallbackParseError("empty callback data")
@@ -64,6 +78,9 @@ def decode(data: str) -> "LobbyCallback | DirectionCallback | DistanceCallback":
     try:
         if kind in (LOBBY_JOIN, LOBBY_LEAVE, LOBBY_START):
             return LobbyCallback(kind=kind, game_id=int(parts[1]))
+        if kind in (RULES, QUIT, DRAW):
+            _, game_id, move_seq = parts
+            return GameButtonCallback(kind=kind, game_id=int(game_id), move_seq=int(move_seq))
         if kind == DIRECTION:
             _, game_id, move_seq, direction = parts
             return DirectionCallback(

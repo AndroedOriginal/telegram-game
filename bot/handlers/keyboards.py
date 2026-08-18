@@ -4,11 +4,15 @@ from __future__ import annotations
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..callback_data import (
+    DRAW,
     LOBBY_JOIN,
     LOBBY_LEAVE,
     LOBBY_START,
+    QUIT,
+    RULES,
     encode_direction,
     encode_distance,
+    encode_game_button,
     encode_lobby,
 )
 from ..game.models import DIRECTION_EMOJI, Direction
@@ -42,6 +46,18 @@ def lobby_keyboard(game_id: int) -> InlineKeyboardMarkup:
 def start_keyboard(game_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("тык", callback_data=encode_lobby(LOBBY_START, game_id))]]
+    )
+
+
+def info_keyboard(game_id: int, move_seq: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Правила", callback_data=encode_game_button(RULES, game_id, move_seq)),
+                InlineKeyboardButton("Выйти", callback_data=encode_game_button(QUIT, game_id, move_seq)),
+                InlineKeyboardButton("Ничья", callback_data=encode_game_button(DRAW, game_id, move_seq)),
+            ]
+        ]
     )
 
 

@@ -209,6 +209,33 @@ def test_knight_invalid_destination():
     assert result.invalid
 
 
+def test_stale_direction_callback_cannot_alter_the_game():
+    a = make_player(1, PieceType.PAWN, "D4")
+    b = make_player(2, PieceType.PAWN, "A1")
+    state = make_state([a, b], move_seq=3)
+
+    result = engine.select_direction(state, 1, Direction.UP, move_seq=0)
+
+    assert not result.ok
+    assert result.reason == "stale"
+    assert a.position == Position.from_algebraic("D4")
+
+
+def test_end_game_finishes_active_match():
+    a = make_player(1, PieceType.PAWN, "D4")
+    b = make_player(2, PieceType.PAWN, "A1")
+    state = make_state([a, b])
+
+    result = engine.end_game(state)
+
+    assert result.ok
+    assert state.status == GameStatus.FINISHED
+    assert any("Игра завершена" in msg for msg in result.announcements)
+    later = engine.select_direction(state, 1, Direction.UP, state.move_seq)
+    assert not later.ok
+    assert later.reason == "not_active"
+
+
 def test_stale_pending_action_is_rejected():
     a = make_player(1, PieceType.BISHOP, "D4")
     b = make_player(2, PieceType.PAWN, "A1")
@@ -333,7 +360,7 @@ def test_owner_can_use_previously_activated_spawn():
     assert a.piece_type == PieceType.BISHOP
 
 
-def test_draw_when_remaining_players_share_piece_type():
+def test_two_knights_do_not_automatically_draw():
     a = make_player(1, PieceType.KNIGHT, "C4")
     b = make_player(2, PieceType.KNIGHT, "A1")
     state = make_state([a, b])
@@ -341,9 +368,8 @@ def test_draw_when_remaining_players_share_piece_type():
     result = engine.select_direction(state, 1, Direction.UP_LEFT, state.move_seq)
 
     assert result.ok
-    assert result.draw is True
-    assert state.status == GameStatus.FINISHED
-    assert set(state.draw_user_ids) == {1, 2}
+    assert result.draw is False
+    assert state.status == GameStatus.ACTIVE
 
 
 def test_victory_when_one_player_remains():

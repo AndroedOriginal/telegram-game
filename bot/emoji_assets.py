@@ -23,9 +23,12 @@ EMPTY_CELL_ID = {
     "black": "5463141938871933969",
 }
 
+# Telegram custom-emoji entities require a *real emoji* as the entity text.
+# Letters, digits, "@", and unadorned chess symbols are rejected with
+# ``Entity_text_invalid``. Every placeholder below is a valid emoji.
 EMPTY_CELL_PLACEHOLDER = {
-    "white": "\u2b1c",  # ⬜
-    "black": "\u2b1b",  # ⬛
+    "white": "\u2b1c\ufe0f",  # ⬜
+    "black": "\u2b1b\ufe0f",  # ⬛
 }
 
 # ---------------------------------------------------------------------------
@@ -55,12 +58,14 @@ PIECE_EMOJI_ID: dict[str, dict[str, dict[str, str]]] = {
     },
 }
 
+# ♟️ is a valid emoji (U+265F U+FE0F). Telegram replaces it with the custom asset.
+_PAWN_EMOJI = "\u265f\ufe0f"
 PIECE_PLACEHOLDER: dict[str, dict[str, str]] = {
-    "rook": {"black": "\u265c", "white": "\u2656"},
-    "knight": {"black": "\u265e", "white": "\u2658"},
-    "bishop": {"black": "\u265d", "white": "\u2657"},
-    "queen": {"black": "\u265b", "white": "\u2655"},
-    "pawn": {"black": "\u265f", "white": "\u2659"},
+    "rook": {"black": _PAWN_EMOJI, "white": _PAWN_EMOJI},
+    "knight": {"black": _PAWN_EMOJI, "white": _PAWN_EMOJI},
+    "bishop": {"black": _PAWN_EMOJI, "white": _PAWN_EMOJI},
+    "queen": {"black": _PAWN_EMOJI, "white": _PAWN_EMOJI},
+    "pawn": {"black": _PAWN_EMOJI, "white": _PAWN_EMOJI},
 }
 
 # ---------------------------------------------------------------------------
@@ -69,6 +74,9 @@ PIECE_PLACEHOLDER: dict[str, dict[str, str]] = {
 
 EVOLUTION_POINT_ID = "5321386637756737472"
 EVOLUTION_POINT_PLACEHOLDER = "\u2728"  # ✨
+
+# Used for A–H / 1–8 / @ custom-emoji labels. Must be a real emoji, not the letter.
+LABEL_PLACEHOLDER = "\u25ab\ufe0f"  # ▫️
 
 # ---------------------------------------------------------------------------
 # Column / row labels and the "@" symbol used in the board header
@@ -97,7 +105,6 @@ ROW_LABEL_ID = {
 }
 
 AT_SYMBOL_ID = "5458830526146157735"
-AT_SYMBOL_PLACEHOLDER = "@"
 
 
 class EmojiRef(NamedTuple):
@@ -129,12 +136,12 @@ def evolution_point() -> EmojiRef:
 
 
 def column_label(letter: str) -> EmojiRef:
-    return EmojiRef(letter, COLUMN_LABEL_ID[letter])
+    return EmojiRef(LABEL_PLACEHOLDER, COLUMN_LABEL_ID[letter])
 
 
 def row_label(digit: str) -> EmojiRef:
-    return EmojiRef(digit, ROW_LABEL_ID[digit])
+    return EmojiRef(LABEL_PLACEHOLDER, ROW_LABEL_ID[digit])
 
 
 def at_symbol() -> EmojiRef:
-    return EmojiRef(AT_SYMBOL_PLACEHOLDER, AT_SYMBOL_ID)
+    return EmojiRef(LABEL_PLACEHOLDER, AT_SYMBOL_ID)

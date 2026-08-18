@@ -120,6 +120,15 @@ def state_to_json(state: GameState) -> str:
         "lobby_message_id": state.lobby_message_id,
         "start_message_id": state.start_message_id,
         "distance_message_id": state.distance_message_id,
+        "announce_message_id": state.announce_message_id,
+        "moves_message_id": state.moves_message_id,
+        "last_announcements": state.last_announcements,
+        "status_line": state.status_line,
+        "chat_line": state.chat_line,
+        "showing_rules": state.showing_rules,
+        "draw_votes": state.draw_votes,
+        "draw_proposer_user_id": state.draw_proposer_user_id,
+        "tracked_message_ids": state.tracked_message_ids,
         "winner_user_id": state.winner_user_id,
         "draw_user_ids": state.draw_user_ids,
     }
@@ -145,6 +154,15 @@ def state_from_json(data: str) -> GameState:
         lobby_message_id=payload["lobby_message_id"],
         start_message_id=payload["start_message_id"],
         distance_message_id=payload["distance_message_id"],
+        announce_message_id=payload.get("announce_message_id"),
+        moves_message_id=payload.get("moves_message_id"),
+        last_announcements=payload.get("last_announcements") or [],
+        status_line=payload.get("status_line"),
+        chat_line=payload.get("chat_line"),
+        showing_rules=payload.get("showing_rules", False),
+        draw_votes=payload.get("draw_votes") or [],
+        draw_proposer_user_id=payload.get("draw_proposer_user_id"),
+        tracked_message_ids=payload.get("tracked_message_ids") or [],
         winner_user_id=payload["winner_user_id"],
         draw_user_ids=payload["draw_user_ids"],
     )
@@ -152,6 +170,11 @@ def state_from_json(data: str) -> GameState:
 
 def save_game(conn: sqlite3.Connection, state: GameState) -> int:
     now = _now()
+    if not state.game_id:
+        existing = load_game(conn, state.chat_id, state.topic_id)
+        if existing is not None:
+            state.game_id = existing.game_id
+
     state_json = state_to_json(state)
     if state.game_id:
         conn.execute(
@@ -175,7 +198,6 @@ def save_game(conn: sqlite3.Connection, state: GameState) -> int:
     conn.commit()
     new_id = cursor.lastrowid
     state.game_id = new_id
-    # Persist the freshly-assigned game_id inside state_json too.
     conn.execute(
         "UPDATE games SET state_json = ? WHERE game_id = ?",
         (state_to_json(state), new_id),
