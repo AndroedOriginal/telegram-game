@@ -110,7 +110,10 @@ AT_SYMBOL_ID = "5458830526146157735"
 # Board-screen divider (one custom emoji above the A–H header, not a cell)
 # ---------------------------------------------------------------------------
 
-DIVIDER_ID = "5463399999999999999"
+# Must be a real document id from this pack. A fabricated id makes Telegram
+# reject the whole board message with Document_invalid; the start handler
+# then never reaches the Ходы: message.
+DIVIDER_ID = EMPTY_CELL_ID["white"]
 DIVIDER_PLACEHOLDER = "\u2796"  # ➖ — real emoji so <tg-emoji> is accepted
 
 
@@ -158,3 +161,23 @@ def divider() -> EmojiRef:
     """Custom-emoji divider used once at the top of the board message."""
 
     return EmojiRef(DIVIDER_PLACEHOLDER, DIVIDER_ID)
+
+
+def all_custom_emoji_ids() -> frozenset[str]:
+    """Every custom-emoji document id configured in this pack.
+
+    Telegram rejects unknown ids with ``Document_invalid``, which aborts
+    the board message and (previously) skipped the Ходы: message too.
+    """
+
+    ids = {
+        *EMPTY_CELL_ID.values(),
+        EVOLUTION_POINT_ID,
+        AT_SYMBOL_ID,
+        *COLUMN_LABEL_ID.values(),
+        *ROW_LABEL_ID.values(),
+    }
+    for by_piece_color in PIECE_EMOJI_ID.values():
+        for by_cell_color in by_piece_color.values():
+            ids.update(by_cell_color.values())
+    return frozenset(ids)

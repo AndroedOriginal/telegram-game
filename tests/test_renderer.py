@@ -1,7 +1,7 @@
 from bot.emoji_assets import (
-    DIVIDER_ID,
     EmojiRef,
     LABEL_PLACEHOLDER,
+    all_custom_emoji_ids,
     at_symbol,
     column_label,
     divider,
@@ -62,11 +62,11 @@ def test_board_message_starts_with_exactly_one_divider_and_is_not_quoted():
 
     assert lines[0] == divider_html
     assert html.count(divider_html) == 1
-    assert html.count(f'emoji-id="{DIVIDER_ID}"') == 1
     assert "<blockquote" not in html
     assert "expandable" not in html
     assert len(lines) == 10  # divider, A–H header, 8 board rows
     assert divider_html not in "\n".join(lines[1:])
+    assert all("<tg-emoji" in line for line in lines[1:])
 
 
 def test_render_board_accepts_an_injected_divider_without_changing_cells():
@@ -78,3 +78,9 @@ def test_render_board_accepts_an_injected_divider_without_changing_cells():
     square = render_square(Position.from_algebraic("A8"), _sample_state())
     assert injected.to_html() not in square
     assert divider().to_html() not in square
+
+
+def test_divider_uses_a_real_configured_custom_emoji_id():
+    """A made-up id is rejected by Telegram as Document_invalid."""
+
+    assert divider().custom_emoji_id in all_custom_emoji_ids()

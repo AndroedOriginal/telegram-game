@@ -125,6 +125,13 @@ async def update_info_message(bot: Bot, state: GameState) -> None:
 
 async def update_board_message(bot: Bot, state: GameState) -> None:
     html = render_board(state)
+    logger.info(
+        "Updating board message chat=%s topic=%s existing_id=%s html_len=%s",
+        state.chat_id,
+        state.topic_id,
+        state.board_message_id,
+        len(html),
+    )
     if state.board_message_id is not None:
         try:
             await telegram_retry(
@@ -137,20 +144,27 @@ async def update_board_message(bot: Bot, state: GameState) -> None:
             )
             return
         except BadRequest as exc:
-            logger.warning("Could not edit board: %s", exc)
+            logger.warning("Could not edit board (id=%s): %s", state.board_message_id, exc)
             state.board_message_id = None
 
-    msg = await telegram_retry(
-        lambda: bot.send_message(
-            chat_id=state.chat_id,
-            message_thread_id=state.topic_id,
-            text=html,
-            parse_mode=ParseMode.HTML,
+    try:
+        msg = await telegram_retry(
+            lambda: bot.send_message(
+                chat_id=state.chat_id,
+                message_thread_id=state.topic_id,
+                text=html,
+                parse_mode=ParseMode.HTML,
+            )
         )
-    )
+    except BadRequest as exc:
+        logger.exception("Could not send board message: %s", exc)
+        return
     if msg is not None:
         state.board_message_id = msg.message_id
         _track(state, msg)
+        logger.info("Board message created id=%s", msg.message_id)
+    else:
+        logger.error("Board message send returned no message")
 
 
 async def update_moves_message(bot: Bot, state: GameState) -> None:
@@ -158,6 +172,12 @@ async def update_moves_message(bot: Bot, state: GameState) -> None:
         direction_keyboard(state.game_id, state.move_seq)
         if state.status == GameStatus.ACTIVE
         else None
+    )
+    logger.info(
+        "Updating moves message chat=%s topic=%s existing_id=%s",
+        state.chat_id,
+        state.topic_id,
+        state.moves_message_id,
     )
     if state.moves_message_id is not None:
         try:
@@ -181,19 +201,27 @@ async def update_moves_message(bot: Bot, state: GameState) -> None:
                 )
                 return
             except BadRequest:
+                logger.warning("Could not edit moves message id=%s; will resend", state.moves_message_id)
                 state.moves_message_id = None
 
-    msg = await telegram_retry(
-        lambda: bot.send_message(
-            chat_id=state.chat_id,
-            message_thread_id=state.topic_id,
-            text=moves_prompt_text(),
-            reply_markup=markup,
+    try:
+        msg = await telegram_retry(
+            lambda: bot.send_message(
+                chat_id=state.chat_id,
+                message_thread_id=state.topic_id,
+                text=moves_prompt_text(),
+                reply_markup=markup,
+            )
         )
-    )
+    except BadRequest as exc:
+        logger.exception("Could not send moves message: %s", exc)
+        return
     if msg is not None:
         state.moves_message_id = msg.message_id
         _track(state, msg)
+        logger.info("Moves message created id=%s", msg.message_id)
+    else:
+        logger.error("Moves message send returned no message")
 
 
 async def send_game_start_messages(bot: Bot, state: GameState) -> None:
@@ -205,9 +233,23 @@ async def send_game_start_messages(bot: Bot, state: GameState) -> None:
 
         state.status_line = turn_announcement(current)
 
-    await update_info_message(bot, state)
-    await update_board_message(bot, state)
-    await update_moves_message(bot, state)
+    # Send independently so a board failure cannot skip Ходы:.
+    try:
+        await update_info_message(bot, state)
+    except Exception:
+        logger.exception("Failed to publish info message")
+    try:
+        await update_board_message(bot, state)
+    except Exception:
+        logger.exception("Failed to publish board message")
+    try:
+        await update_moves_message(bot, state)
+    except Exception:
+        logger.exception("Failed to publish moves message")
+    if state.board_message_id is None:
+        logger.error("Game start finished without a board message")
+    if state.moves_message_id is None:
+        logger.error("Game start finished without a moves message")
 
 
 async def update_game_messages(bot: Bot, state: GameState) -> None:
