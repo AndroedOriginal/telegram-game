@@ -141,9 +141,26 @@ class Player:
 
 @dataclass
 class Spawn:
+    """An evolution point owned by one player.
+
+    Identity is ``owner_user_id`` (one spawn per player), not the current
+    board coordinate. ``activated_by_other`` is the permanent owner-unlock
+    flag: once True it stays True even if the point relocates.
+    """
+
     owner_user_id: int
     position: Position
-    activated: bool = False  # True once used by a player other than the owner
+    activated_by_other: bool = False
+
+    @property
+    def activated(self) -> bool:
+        """Backward-compatible alias for :attr:`activated_by_other`."""
+
+        return self.activated_by_other
+
+    @activated.setter
+    def activated(self, value: bool) -> None:
+        self.activated_by_other = value
 
 
 @dataclass
@@ -237,5 +254,14 @@ class GameState:
     def get_spawn_at(self, position: Position) -> Spawn | None:
         for spawn in self.spawns:
             if spawn.position == position:
+                return spawn
+        return None
+
+    def get_spawn_for_owner(self, user_id: int) -> Spawn | None:
+        """Return the spawn belonging to ``user_id``, regardless of where
+        it currently sits on the board."""
+
+        for spawn in self.spawns:
+            if spawn.owner_user_id == user_id:
                 return spawn
         return None

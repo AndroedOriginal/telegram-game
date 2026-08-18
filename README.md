@@ -21,13 +21,14 @@ Telegram emoji rendering, SQLite persistence, and an automated test suite.
 
 - **Board.** Always exactly 8×8, rendered with Telegram custom/premium emoji
   (never plain Unicode squares) — column letters (A–H) and row numbers
-  (1–8) are shown as a header/side using the same custom emoji.
+  (1–8) are shown as a header/side using the same custom emoji. The board
+  message is wrapped in a normal (non-collapsible) Telegram quote.
 - **Spawns are evolution points.** Every player's starting square becomes a
-  permanent *spawn* object owned by that player. Any other player who
-  reaches a spawn immediately evolves; the spawn then teleports to a new
-  random empty square. A player can **not** use their own spawn for a free
-  evolution — until another player has used it first. After that, the
-  owner may also use it (forever, even after it relocates).
+  permanent *spawn* object owned by that player (identity is the owner, not
+  the coordinate). A player cannot evolve on their **own** spawn at first.
+  That spawn unlocks permanently if (A) the owner evolves on someone else's
+  point, or (B) another player evolves on it. Relocation does not reset the
+  unlock. Evolving into a Queen removes the used point instead of moving it.
 - **Movement**
   - *Pawn* — one square up/down/left/right. Diagonals are attack-only: a
     pawn can move diagonally only to eliminate an enemy piece sitting

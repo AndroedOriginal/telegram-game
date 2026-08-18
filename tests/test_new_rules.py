@@ -173,7 +173,7 @@ def test_leaving_player_is_removed_from_draw_vote_count():
 def test_queen_evolution_removes_spawn_non_queen_relocates():
     a = make_player(1, PieceType.ROOK, "C4")
     b = make_player(2, PieceType.PAWN, "B1")
-    spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated=True)
+    spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated_by_other=True)
     state = make_state([a, b], spawns=[spawn])
     opened = engine.select_direction(state, 1, Direction.RIGHT, 0)
     assert opened.pending_distances
@@ -187,7 +187,7 @@ def test_queen_evolution_removes_spawn_non_queen_relocates():
 def test_non_queen_evolution_relocates_spawn():
     a = make_player(1, PieceType.PAWN, "C4")
     b = make_player(2, PieceType.PAWN, "B1")
-    spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated=False)
+    spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated_by_other=False)
     state = make_state([a, b], spawns=[spawn])
     engine.select_direction(state, 1, Direction.RIGHT, 0)
     assert a.piece_type == PieceType.BISHOP
@@ -199,7 +199,7 @@ def test_non_queen_evolution_relocates_spawn():
 def test_queen_queen_draw_after_evolution():
     a = make_player(1, PieceType.ROOK, "C4")
     b = make_player(2, PieceType.QUEEN, "A8")
-    spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated=True)
+    spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated_by_other=True)
     state = make_state([a, b], spawns=[spawn])
     opened = engine.select_direction(state, 1, Direction.RIGHT, 0)
     assert opened.pending_distances
@@ -211,8 +211,8 @@ def test_queen_queen_draw_after_evolution():
 def test_evolution_points_match_piece_square_color():
     a = make_player(1, PieceType.BISHOP, "C1")  # C1 is black? C=2, row1: 2+0 even? col 2 row 1: 2+0=2 even -> black
     b = make_player(2, PieceType.PAWN, "H8")
-    spawn = Spawn(owner_user_id=1, position=Position.from_algebraic("A2"), activated=True)
-    other = Spawn(owner_user_id=2, position=Position.from_algebraic("H7"), activated=True)
+    spawn = Spawn(owner_user_id=1, position=Position.from_algebraic("A2"), activated_by_other=True)
+    other = Spawn(owner_user_id=2, position=Position.from_algebraic("H7"), activated_by_other=True)
     from bot.game.spawns import ensure_spawn_color_coverage
 
     ensure_spawn_color_coverage([spawn, other], [a, b])

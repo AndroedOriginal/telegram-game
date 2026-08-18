@@ -359,7 +359,7 @@ def test_pawn_step_kills_enemy_on_attack_diagonal():
 def test_evolution_on_reaching_another_players_spawn():
     a = make_player(1, PieceType.PAWN, "C4")
     b = make_player(2, PieceType.PAWN, "B1")
-    spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated=False)
+    spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated_by_other=False)
     state = make_state([a, b], spawns=[spawn])
 
     result = engine.select_direction(state, 1, Direction.RIGHT, state.move_seq)
@@ -368,14 +368,14 @@ def test_evolution_on_reaching_another_players_spawn():
     assert result.evolved is True
     assert a.piece_type == PieceType.BISHOP
     assert any("меняет фигуру" in msg for msg in result.announcements)
-    assert spawn.activated is True
+    assert spawn.activated_by_other is True
     assert spawn.position != Position.from_algebraic("D4")  # relocated
 
 
 def test_owner_cannot_use_own_unactivated_spawn():
     a = make_player(1, PieceType.PAWN, "C4")
     b = make_player(2, PieceType.PAWN, "B1")
-    spawn = Spawn(owner_user_id=1, position=Position.from_algebraic("D4"), activated=False)
+    spawn = Spawn(owner_user_id=1, position=Position.from_algebraic("D4"), activated_by_other=False)
     state = make_state([a, b], spawns=[spawn])
 
     result = engine.select_direction(state, 1, Direction.RIGHT, state.move_seq)
@@ -383,14 +383,14 @@ def test_owner_cannot_use_own_unactivated_spawn():
     assert result.ok
     assert result.evolved is False
     assert a.piece_type == PieceType.PAWN
-    assert spawn.activated is False
+    assert spawn.activated_by_other is False
     assert spawn.position == Position.from_algebraic("D4")  # not relocated: not "used"
 
 
 def test_owner_can_use_previously_activated_spawn():
     a = make_player(1, PieceType.PAWN, "C4")
     b = make_player(2, PieceType.PAWN, "B1")
-    spawn = Spawn(owner_user_id=1, position=Position.from_algebraic("D4"), activated=True)
+    spawn = Spawn(owner_user_id=1, position=Position.from_algebraic("D4"), activated_by_other=True)
     state = make_state([a, b], spawns=[spawn])
 
     result = engine.select_direction(state, 1, Direction.RIGHT, state.move_seq)

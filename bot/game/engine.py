@@ -116,7 +116,7 @@ def start_game(state: GameState, rng: random.Random | None = None) -> StartResul
         player.left = False
 
     state.spawns = [
-        Spawn(owner_user_id=player.user_id, position=player.position, activated=False)
+        Spawn(owner_user_id=player.user_id, position=player.position, activated_by_other=False)
         for player in state.players
     ]
     ensure_spawn_color_coverage(state.spawns, state.players)
@@ -208,7 +208,7 @@ def _maybe_evolve_on_landing(state: GameState, player: Player, destination: Posi
     spawn = state.get_spawn_at(destination)
     if spawn is None or not can_use_spawn(player, spawn):
         return
-    mark_spawn_used(player, spawn)
+    mark_spawn_used(player, spawn, state.spawns)
     evolved = evolve_player(player)
     if not evolved:
         return

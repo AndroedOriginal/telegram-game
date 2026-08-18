@@ -40,6 +40,9 @@ def test_render_board_uses_tg_emoji_tags_not_raw_letters_as_entities():
     state.players = [player]
     state.spawns = [Spawn(owner_user_id=1, position=Position.from_algebraic("D4"))]
     html = render_board(state)
+    assert html.startswith("<blockquote>")
+    assert html.endswith("</blockquote>")
+    assert "expandable" not in html
     assert html.count("<tg-emoji") == 9 * 9  # header + 8 rows, 9 cells each
     assert 'emoji-id="' in html
     square = render_square(Position.from_algebraic("A8"), state)

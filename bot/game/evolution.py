@@ -6,16 +6,17 @@ from .models import PIECE_NAME_RU, Player, Spawn, next_piece_type
 
 
 def can_use_spawn(player: Player, spawn: Spawn) -> bool:
-    """A player may evolve on any spawn except their own un-activated one.
+    """A player may evolve on any foreign spawn. Their own spawn is locked
+    until ``activated_by_other`` is True.
 
-    Section 6/49: the owner cannot use their own spawn for a free evolution
-    until another player has activated it (section 7). Once activated, the
-    owner's access is permanent (section 7), even if the spawn relocates.
+    Unlock (permanent, tied to spawn identity / owner, not coordinates):
+    1. the owner evolves on another player's spawn, or
+    2. another player evolves on this spawn.
     """
 
     if spawn.owner_user_id != player.user_id:
         return True
-    return spawn.activated
+    return spawn.activated_by_other
 
 
 def evolve_player(player: Player) -> bool:
@@ -37,12 +38,28 @@ def evolution_announcement(player: Player) -> str:
     return f"\U0001f508 {player.mention} меняет фигуру на {piece_name}."
 
 
-def mark_spawn_used(player: Player, spawn: Spawn) -> None:
-    """Update the spawn's activation flag after ``player`` uses it.
+def _unlock_spawn(spawn: Spawn) -> None:
+    spawn.activated_by_other = True
 
-    The flag only matters for the owner's own spawn, and only ever
-    transitions False -> True (it is never reset, even after relocation).
+
+def mark_spawn_used(player: Player, spawn: Spawn, all_spawns: list[Spawn] | None = None) -> None:
+    """Record that ``player`` evolved on ``spawn``.
+
+    * Case B — another player used this spawn: unlock it for its owner.
+    * Case A — the player used a foreign spawn: unlock *their own* spawn
+      (looked up by owner id, not by coordinate).
+
+    The flag only ever transitions False → True and survives relocation.
+    Using your own already-unlocked spawn does not change anything.
     """
 
-    if spawn.owner_user_id != player.user_id and not spawn.activated:
-        spawn.activated = True
+    if spawn.owner_user_id == player.user_id:
+        return
+
+    _unlock_spawn(spawn)
+    if all_spawns is None:
+        return
+    for own in all_spawns:
+        if own.owner_user_id == player.user_id:
+            _unlock_spawn(own)
+            return

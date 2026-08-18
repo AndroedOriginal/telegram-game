@@ -43,4 +43,6 @@ def render_board(state: GameState) -> str:
         cells += row_label(str(row)).to_html()
         lines.append(cells)
 
-    return "\n".join(lines)
+    # Normal (non-collapsible) Telegram quote so the full board stays visible.
+    body = "\n".join(lines)
+    return f"<blockquote>{body}</blockquote>"

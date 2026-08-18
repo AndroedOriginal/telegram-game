@@ -66,15 +66,17 @@ def _spawn_to_dict(spawn: Spawn) -> dict:
     return {
         "owner_user_id": spawn.owner_user_id,
         "position": _position_to_json(spawn.position),
-        "activated": spawn.activated,
+        "activated_by_other": spawn.activated_by_other,
+        "activated": spawn.activated_by_other,
     }
 
 
 def _spawn_from_dict(data: dict) -> Spawn:
+    unlocked = bool(data.get("activated_by_other", data.get("activated", False)))
     return Spawn(
         owner_user_id=data["owner_user_id"],
         position=_position_from_json(data["position"]),
-        activated=data["activated"],
+        activated_by_other=unlocked,
     )
 
 

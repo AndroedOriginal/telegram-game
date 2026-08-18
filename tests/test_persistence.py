@@ -25,6 +25,8 @@ def test_save_and_load_game_round_trip():
         assert len(loaded.players) == 2
         assert len(loaded.spawns) == 2
         assert loaded.turn_order == state.turn_order
+        assert all(s.activated_by_other is False for s in loaded.spawns)
+        assert all(s.owner_user_id in {p.user_id for p in loaded.players} for s in loaded.spawns)
 
         conn.close()
 
