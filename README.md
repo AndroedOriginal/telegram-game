@@ -40,10 +40,11 @@ Telegram emoji rendering, SQLite persistence, and an automated test suite.
     use the full classic 8-square L-shape geometry.
   - A player can never land on an occupied square (the pawn diagonal
     attack is the only exception).
-- **Check is lethal, not a restriction.** You *may* move into an opponent's
-  attack range — but if your piece is under attack right after your move,
-  you are eliminated immediately. If two pieces end up attacking each
-  other, whoever moved **last** into that state is the one who dies.
+- **Check is lethal and immediate.** After a move, every other living
+  player inside the mover's attack area is eliminated at once. There is
+  no persistent check: the attacked player does not get a turn to escape.
+  Status becomes `🔈 @attacker ставит шах @victim`. If the mover is still
+  under attack after that resolution, the mover also dies.
 - **Turns.** Turn order is shuffled once at game start and then proceeds
   cyclically, skipping eliminated/left players. Only the active player's
   button presses do anything; everyone else's taps are silently ignored.
@@ -167,8 +168,8 @@ pytest
 ```
 
 The suite covers pawn/bishop/knight/rook/queen movement, blockers and
-occupied-cell rules, attack detection, death-by-check (including mutual
-attacks and "last move" priority), evolution and the full spawn-activation
+occupied-cell rules, attack detection, lethal immediate check (the
+attacked player dies and is skipped), evolution and the full spawn-activation
 lifecycle (owner restriction, activation by another player, permanent
 unlock, relocation, Queen evolution removing the point), draw votes,
 automatic Queen-draw, victory, leaving, chat mirroring, invalid moves,

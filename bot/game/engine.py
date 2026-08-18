@@ -204,53 +204,66 @@ def _finish_if_game_over(state: GameState, result: ActionResult) -> bool:
     return False
 
 
-def _apply_successful_landing(state: GameState, player: Player, destination: Position, result: ActionResult) -> None:
-    """Common post-move pipeline once a legal destination has been computed:
-    move the piece, check death, check evolution, check announcements, then
-    draw/victory, then advance the turn."""
+def _maybe_evolve_on_landing(state: GameState, player: Player, destination: Position, result: ActionResult) -> None:
+    spawn = state.get_spawn_at(destination)
+    if spawn is None or not can_use_spawn(player, spawn):
+        return
+    mark_spawn_used(player, spawn)
+    evolved = evolve_player(player)
+    if not evolved:
+        return
+    result.evolved = True
+    result.announcements.append(evolution_announcement(player))
+    if player.piece_type == PieceType.QUEEN:
+        state.spawns = [s for s in state.spawns if s is not spawn]
+    else:
+        relocate_spawn(
+            spawn,
+            state.spawns,
+            state.occupied_positions(),
+            required_color=cell_color(player.position),
+        )
+    ensure_spawn_color_coverage(state.spawns, state.active_players())
 
-    player.position = destination
+
+def _eliminate_players_in_mover_attack(state: GameState, player: Player, result: ActionResult) -> None:
+    """Check is lethal and immediate: anyone the mover now attacks dies,
+    with no chance to escape. Dead pieces leave the board, so a newly
+    opened ray can eliminate another player in the same resolution."""
+
+    if not player.is_active or player.position is None:
+        return
+    while True:
+        occupied = state.occupied_positions()
+        attacks = attacked_squares(player.piece_type, player.position, occupied)
+        victims = [
+            other
+            for other in state.active_players()
+            if other.user_id != player.user_id and other.position in attacks
+        ]
+        if not victims:
+            return
+        for victim in victims:
+            victim.alive = False
+            result.announcements.append(rules.check_announcement(player, victim))
+
+
+def _kill_mover_if_still_attacked(state: GameState, player: Player, result: ActionResult) -> None:
+    """After the mover's checks are resolved, standing in a remaining
+    opponent's attack is still lethal — there is no persistent check."""
+
+    if not player.is_active or player.position is None:
+        return
     occupied = state.occupied_positions()
-
     others = [p for p in state.active_players() if p.user_id != player.user_id]
-    is_attacked = any(
-        destination in attacked_squares(o.piece_type, o.position, occupied) for o in others
-    )
-
-    if is_attacked:
+    if any(player.position in attacked_squares(o.piece_type, o.position, occupied) for o in others):
         player.alive = False
         result.died = True
-    else:
-        spawn = state.get_spawn_at(destination)
-        if spawn is not None and can_use_spawn(player, spawn):
-            mark_spawn_used(player, spawn)
-            evolved = evolve_player(player)
-            if evolved:
-                result.evolved = True
-                result.announcements.append(evolution_announcement(player))
-                if player.piece_type == PieceType.QUEEN:
-                    state.spawns = [s for s in state.spawns if s is not spawn]
-                else:
-                    relocate_spawn(
-                        spawn,
-                        state.spawns,
-                        state.occupied_positions(),
-                        required_color=cell_color(player.position),
-                    )
-                ensure_spawn_color_coverage(state.spawns, state.active_players())
 
-        # Recompute checks caused by the mover's (possibly upgraded) piece.
-        occupied_after = state.occupied_positions()
-        mover_attacks = attacked_squares(player.piece_type, player.position, occupied_after)
-        for other in state.active_players():
-            if other.user_id == player.user_id:
-                continue
-            if other.position in mover_attacks:
-                result.announcements.append(rules.check_announcement(player, other))
 
+def _finalize_completed_move(state: GameState, player: Player, result: ActionResult) -> None:
     result.move_completed = True
     result.mover_user_id = player.user_id
-
     game_over = _finish_if_game_over(state, result)
     if not game_over:
         _advance_turn(state)
@@ -258,6 +271,19 @@ def _apply_successful_landing(state: GameState, player: Player, destination: Pos
         state.showing_rules = False
     state.move_seq += 1
     _apply_status_from_result(state, result)
+
+
+def _apply_successful_landing(state: GameState, player: Player, destination: Position, result: ActionResult) -> None:
+    """Common post-move pipeline once a legal destination has been computed:
+    move, evolve, immediately eliminate anyone now in the mover's attack
+    area, then die if the mover is still under fire, then draw/victory,
+    then advance the turn past anyone who just died."""
+
+    player.position = destination
+    _maybe_evolve_on_landing(state, player, destination, result)
+    _eliminate_players_in_mover_attack(state, player, result)
+    _kill_mover_if_still_attacked(state, player, result)
+    _finalize_completed_move(state, player, result)
 
 
 def _validate_actor(state: GameState, user_id: int) -> tuple[Player | None, str | None]:
@@ -338,39 +364,16 @@ def select_direction(
 
 def _apply_pawn_attack(state: GameState, attacker: Player, victim: Player) -> ActionResult:
     """A pawn diagonal attack eliminates the victim without the attacker
-    moving. The attacker's square is then re-evaluated for danger, matching
-    the "recalculate attacks after every move" rule."""
+    moving. That is the same lethal check as any other attack: the victim
+    dies immediately, then remaining attack rays and the attacker's own
+    square are resolved."""
 
     result = ActionResult(ok=True)
     victim.alive = False
-
-    occupied_after = state.occupied_positions()
-    others = [p for p in state.active_players() if p.user_id != attacker.user_id]
-    is_attacked = any(
-        attacker.position in attacked_squares(o.piece_type, o.position, occupied_after)
-        for o in others
-    )
-    if is_attacked:
-        attacker.alive = False
-        result.died = True
-    else:
-        mover_attacks = attacked_squares(attacker.piece_type, attacker.position, occupied_after)
-        for other in state.active_players():
-            if other.user_id == attacker.user_id:
-                continue
-            if other.position in mover_attacks:
-                result.announcements.append(rules.check_announcement(attacker, other))
-
-    result.move_completed = True
-    result.mover_user_id = attacker.user_id
-
-    game_over = _finish_if_game_over(state, result)
-    if not game_over:
-        _advance_turn(state)
-        state.pending_action = None
-        state.showing_rules = False
-    state.move_seq += 1
-    _apply_status_from_result(state, result)
+    result.announcements.append(rules.check_announcement(attacker, victim))
+    _eliminate_players_in_mover_attack(state, attacker, result)
+    _kill_mover_if_still_attacked(state, attacker, result)
+    _finalize_completed_move(state, attacker, result)
     return result
 
 

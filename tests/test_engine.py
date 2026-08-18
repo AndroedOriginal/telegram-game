@@ -119,6 +119,24 @@ def test_pawn_diagonal_attack_eliminates_enemy_and_attacker_stays():
     assert b.alive is False
     assert state.active_players() == [a]
     assert result.victory  # only one player remains
+    assert "побеждает" in state.status_line
+
+
+def test_pawn_diagonal_attack_is_lethal_check_and_skips_victim():
+    a = make_player(1, PieceType.PAWN, "D4", username="attacker")
+    b = make_player(2, PieceType.PAWN, "C5", username="victim")
+    c = make_player(3, PieceType.PAWN, "H8", username="next")
+    state = make_state([a, b, c])
+
+    result = engine.select_direction(state, 1, Direction.UP_LEFT, state.move_seq)
+
+    assert result.ok
+    assert b.alive is False
+    assert c.alive is True
+    assert result.victory is False
+    assert any("ставит шах" in a_text and "@victim" in a_text for a_text in result.announcements)
+    assert state.status_line == "\U0001f508 @attacker ставит шах @victim."
+    assert state.current_player().user_id == 3
 
 
 def test_bishop_direction_selection_opens_distance_menu():
@@ -136,7 +154,7 @@ def test_bishop_direction_selection_opens_distance_menu():
 
 def test_bishop_distance_selection_moves_piece():
     a = make_player(1, PieceType.BISHOP, "D4")
-    b = make_player(2, PieceType.PAWN, "A1")
+    b = make_player(2, PieceType.PAWN, "B1")
     state = make_state([a, b])
 
     dir_result = engine.select_direction(state, 1, Direction.UP_RIGHT, state.move_seq)
@@ -283,11 +301,11 @@ def test_death_by_moving_into_attack():
     assert state.current_player().user_id == 2
 
 
-def test_mutual_attack_last_mover_dies():
-    # Two rooks facing each other on the same file with a gap; mover advances
-    # into direct line of sight and dies even though it also attacks back.
-    mover = make_player(1, PieceType.ROOK, "D1")
-    other = make_player(2, PieceType.ROOK, "D8")
+def test_mutual_attack_kills_the_attacked_player_immediately():
+    # Two rooks on the same file: the mover steps adjacent and puts the
+    # other rook in check. The attacked rook dies at once; the mover lives.
+    mover = make_player(1, PieceType.ROOK, "D1", username="attacker")
+    other = make_player(2, PieceType.ROOK, "D8", username="victim")
     state = make_state([mover, other])
 
     result = engine.select_direction(state, 1, Direction.UP, state.move_seq)
@@ -295,13 +313,14 @@ def test_mutual_attack_last_mover_dies():
     result = engine.select_distance(state, 1, Direction.UP, 6, seq)  # D1 -> D7, adjacent to D8
 
     assert result.ok
-    assert result.died is True
-    assert mover.alive is False
-    assert other.alive is True
+    assert result.died is False
+    assert mover.alive is True
+    assert other.alive is False
     assert result.victory is True
+    assert "побеждает" in state.status_line
 
 
-def test_check_announcement_emitted_when_move_threatens_another_player():
+def test_check_is_lethal_skips_victim_and_sets_status():
     mover = make_player(1, PieceType.ROOK, "D1", username="rooker")
     victim = make_player(2, PieceType.PAWN, "D8", username="victim")
     safe = make_player(3, PieceType.PAWN, "A1", username="safe")
@@ -313,12 +332,33 @@ def test_check_announcement_emitted_when_move_threatens_another_player():
 
     assert result.ok
     assert result.died is False
+    assert victim.alive is False
+    assert safe.alive is True
+    assert result.victory is False
     assert any("ставит шах" in a and "@victim" in a for a in result.announcements)
+    assert state.status_line == "\U0001f508 @rooker ставит шах @victim."
+    assert state.current_player().user_id == 3
+
+
+def test_pawn_step_kills_enemy_on_attack_diagonal():
+    mover = make_player(1, PieceType.PAWN, "D4", username="attacker")
+    victim = make_player(2, PieceType.PAWN, "E6", username="victim")
+    safe = make_player(3, PieceType.PAWN, "A1", username="safe")
+    state = make_state([mover, victim, safe])
+
+    result = engine.select_direction(state, 1, Direction.UP, state.move_seq)  # D4 -> D5, attacks E6
+
+    assert result.ok
+    assert mover.position == Position.from_algebraic("D5")
+    assert victim.alive is False
+    assert safe.alive is True
+    assert state.status_line == "\U0001f508 @attacker ставит шах @victim."
+    assert state.current_player().user_id == 3
 
 
 def test_evolution_on_reaching_another_players_spawn():
     a = make_player(1, PieceType.PAWN, "C4")
-    b = make_player(2, PieceType.PAWN, "A1")
+    b = make_player(2, PieceType.PAWN, "B1")
     spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated=False)
     state = make_state([a, b], spawns=[spawn])
 
@@ -334,7 +374,7 @@ def test_evolution_on_reaching_another_players_spawn():
 
 def test_owner_cannot_use_own_unactivated_spawn():
     a = make_player(1, PieceType.PAWN, "C4")
-    b = make_player(2, PieceType.PAWN, "A1")
+    b = make_player(2, PieceType.PAWN, "B1")
     spawn = Spawn(owner_user_id=1, position=Position.from_algebraic("D4"), activated=False)
     state = make_state([a, b], spawns=[spawn])
 
@@ -349,7 +389,7 @@ def test_owner_cannot_use_own_unactivated_spawn():
 
 def test_owner_can_use_previously_activated_spawn():
     a = make_player(1, PieceType.PAWN, "C4")
-    b = make_player(2, PieceType.PAWN, "A1")
+    b = make_player(2, PieceType.PAWN, "B1")
     spawn = Spawn(owner_user_id=1, position=Position.from_algebraic("D4"), activated=True)
     state = make_state([a, b], spawns=[spawn])
 

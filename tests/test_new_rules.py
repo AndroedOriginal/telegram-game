@@ -172,7 +172,7 @@ def test_leaving_player_is_removed_from_draw_vote_count():
 
 def test_queen_evolution_removes_spawn_non_queen_relocates():
     a = make_player(1, PieceType.ROOK, "C4")
-    b = make_player(2, PieceType.PAWN, "A1")
+    b = make_player(2, PieceType.PAWN, "B1")
     spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated=True)
     state = make_state([a, b], spawns=[spawn])
     opened = engine.select_direction(state, 1, Direction.RIGHT, 0)
@@ -186,7 +186,7 @@ def test_queen_evolution_removes_spawn_non_queen_relocates():
 
 def test_non_queen_evolution_relocates_spawn():
     a = make_player(1, PieceType.PAWN, "C4")
-    b = make_player(2, PieceType.PAWN, "A1")
+    b = make_player(2, PieceType.PAWN, "B1")
     spawn = Spawn(owner_user_id=2, position=Position.from_algebraic("D4"), activated=False)
     state = make_state([a, b], spawns=[spawn])
     engine.select_direction(state, 1, Direction.RIGHT, 0)
