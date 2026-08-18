@@ -1,7 +1,10 @@
 from bot.emoji_assets import (
+    DIVIDER_ID,
+    EmojiRef,
     LABEL_PLACEHOLDER,
     at_symbol,
     column_label,
+    divider,
     empty_cell,
     evolution_point,
     piece,
@@ -16,18 +19,7 @@ def _is_emoji_placeholder(text: str) -> bool:
     return not text.isalnum() and text not in {"@", "#"}
 
 
-def test_custom_emoji_placeholders_are_not_plain_text():
-    assert _is_emoji_placeholder(empty_cell("white").placeholder)
-    assert _is_emoji_placeholder(empty_cell("black").placeholder)
-    assert _is_emoji_placeholder(piece("pawn", "white", "black").placeholder)
-    assert _is_emoji_placeholder(evolution_point().placeholder)
-    assert _is_emoji_placeholder(column_label("A").placeholder)
-    assert _is_emoji_placeholder(row_label("8").placeholder)
-    assert _is_emoji_placeholder(at_symbol().placeholder)
-    assert column_label("A").placeholder == LABEL_PLACEHOLDER
-
-
-def test_render_board_uses_tg_emoji_tags_not_raw_letters_as_entities():
+def _sample_state() -> GameState:
     state = GameState(game_id=1, chat_id=-1, topic_id=1, status=GameStatus.ACTIVE)
     player = Player(
         user_id=1,
@@ -39,12 +31,50 @@ def test_render_board_uses_tg_emoji_tags_not_raw_letters_as_entities():
     )
     state.players = [player]
     state.spawns = [Spawn(owner_user_id=1, position=Position.from_algebraic("D4"))]
-    html = render_board(state)
-    assert html.startswith("<blockquote>")
-    assert html.endswith("</blockquote>")
-    assert "expandable" not in html
-    assert html.count("<tg-emoji") == 9 * 9  # header + 8 rows, 9 cells each
+    return state
+
+
+def test_custom_emoji_placeholders_are_not_plain_text():
+    assert _is_emoji_placeholder(empty_cell("white").placeholder)
+    assert _is_emoji_placeholder(empty_cell("black").placeholder)
+    assert _is_emoji_placeholder(piece("pawn", "white", "black").placeholder)
+    assert _is_emoji_placeholder(evolution_point().placeholder)
+    assert _is_emoji_placeholder(column_label("A").placeholder)
+    assert _is_emoji_placeholder(row_label("8").placeholder)
+    assert _is_emoji_placeholder(at_symbol().placeholder)
+    assert _is_emoji_placeholder(divider().placeholder)
+    assert column_label("A").placeholder == LABEL_PLACEHOLDER
+
+
+def test_render_board_uses_tg_emoji_tags_not_raw_letters_as_entities():
+    html = render_board(_sample_state())
+    assert html.count("<tg-emoji") == 9 * 9 + 1  # divider + header + 8 rows
     assert 'emoji-id="' in html
-    square = render_square(Position.from_algebraic("A8"), state)
+    square = render_square(Position.from_algebraic("A8"), _sample_state())
     assert square.startswith("<tg-emoji")
     assert "A" not in square
+
+
+def test_board_message_starts_with_exactly_one_divider_and_is_not_quoted():
+    html = render_board(_sample_state())
+    lines = html.split("\n")
+    divider_html = divider().to_html()
+
+    assert lines[0] == divider_html
+    assert html.count(divider_html) == 1
+    assert html.count(f'emoji-id="{DIVIDER_ID}"') == 1
+    assert "<blockquote" not in html
+    assert "expandable" not in html
+    assert len(lines) == 10  # divider, A–H header, 8 board rows
+    assert divider_html not in "\n".join(lines[1:])
+
+
+def test_render_board_accepts_an_injected_divider_without_changing_cells():
+    injected = EmojiRef("\u2796", "1111111111111111111")
+    html = render_board(_sample_state(), divider=injected)
+    assert html.startswith(injected.to_html() + "\n")
+    assert html.count(injected.to_html()) == 1
+    assert "<blockquote" not in html
+    square = render_square(Position.from_algebraic("A8"), _sample_state())
+    assert injected.to_html() not in square
+    assert divider().to_html() not in square

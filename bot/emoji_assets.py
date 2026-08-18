@@ -106,6 +106,13 @@ ROW_LABEL_ID = {
 
 AT_SYMBOL_ID = "5458830526146157735"
 
+# ---------------------------------------------------------------------------
+# Board-screen divider (one custom emoji above the A–H header, not a cell)
+# ---------------------------------------------------------------------------
+
+DIVIDER_ID = "5463399999999999999"
+DIVIDER_PLACEHOLDER = "\u2796"  # ➖ — real emoji so <tg-emoji> is accepted
+
 
 class EmojiRef(NamedTuple):
     """A placeholder character paired with the custom emoji id it maps to."""
@@ -145,3 +152,9 @@ def row_label(digit: str) -> EmojiRef:
 
 def at_symbol() -> EmojiRef:
     return EmojiRef(LABEL_PLACEHOLDER, AT_SYMBOL_ID)
+
+
+def divider() -> EmojiRef:
+    """Custom-emoji divider used once at the top of the board message."""
+
+    return EmojiRef(DIVIDER_PLACEHOLDER, DIVIDER_ID)

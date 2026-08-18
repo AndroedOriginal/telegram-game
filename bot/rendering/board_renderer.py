@@ -7,7 +7,16 @@ require.
 """
 from __future__ import annotations
 
-from ..emoji_assets import at_symbol, column_label, empty_cell, evolution_point, piece, row_label
+from ..emoji_assets import (
+    EmojiRef,
+    at_symbol,
+    column_label,
+    divider as default_divider,
+    empty_cell,
+    evolution_point,
+    piece,
+    row_label,
+)
 from ..game.board import ROWS, Position, cell_color
 from ..game.models import GameState
 
@@ -29,10 +38,16 @@ def render_square(position: Position, state: GameState) -> str:
     return empty_cell(color).to_html()
 
 
-def render_board(state: GameState) -> str:
-    """Render the full board message text (HTML, custom emoji)."""
+def render_board(state: GameState, divider: EmojiRef | None = None) -> str:
+    """Render the full board message text (HTML, custom emoji).
 
-    lines: list[str] = []
+    The screen is the original board (header + 8 rows) with exactly one
+    divider custom emoji inserted as the first line. Cell rendering is
+    unchanged; the divider is not part of ``render_square``.
+    """
+
+    screen_divider = default_divider() if divider is None else divider
+    lines: list[str] = [screen_divider.to_html()]
 
     header = "".join(column_label(letter).to_html() for letter in "ABCDEFGH")
     header += at_symbol().to_html()
@@ -43,6 +58,4 @@ def render_board(state: GameState) -> str:
         cells += row_label(str(row)).to_html()
         lines.append(cells)
 
-    # Normal (non-collapsible) Telegram quote so the full board stays visible.
-    body = "\n".join(lines)
-    return f"<blockquote>{body}</blockquote>"
+    return "\n".join(lines)

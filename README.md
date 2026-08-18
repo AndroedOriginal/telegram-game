@@ -22,7 +22,8 @@ Telegram emoji rendering, SQLite persistence, and an automated test suite.
 - **Board.** Always exactly 8×8, rendered with Telegram custom/premium emoji
   (never plain Unicode squares) — column letters (A–H) and row numbers
   (1–8) are shown as a header/side using the same custom emoji. The board
-  message is wrapped in a normal (non-collapsible) Telegram quote.
+  message is the original custom-emoji screen with a single divider emoji
+  inserted as the first line (no quote).
 - **Spawns are evolution points.** Every player's starting square becomes a
   permanent *spawn* object owned by that player (identity is the owner, not
   the coordinate). A player cannot evolve on their **own** spawn at first.
