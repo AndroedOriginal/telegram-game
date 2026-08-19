@@ -1,12 +1,16 @@
 """Attack-area computation, following classic chess geometry.
 
-Attack areas are used for check/death detection and are intentionally more
-generous than the restricted movement controls exposed to the player (see
-``movement.py`` for the knight's 4-button restriction). Section 17 of the
-spec requires bishop/knight/rook/queen attack geometry to match "original
-chess", while pawns use the custom four-diagonal rule.
+A Pawn attacks only the four immediately adjacent diagonal cells. Bishop,
+Rook and Queen slide along their chess lines until blocked. A Knight
+attacks all eight classic L-shaped destinations and ignores blockers.
+
+After a move, lethal check uses these areas from the resulting position:
+if the mover's destination is attacked by any other alive player, the
+mover dies immediately.
 """
 from __future__ import annotations
+
+from collections.abc import Iterable
 
 from .board import Position
 from .models import (
@@ -15,6 +19,7 @@ from .models import (
     DIRECTION_VECTORS,
     KNIGHT_ATTACK_VECTORS,
     PieceType,
+    Player,
 )
 
 MAX_SLIDE_DISTANCE = 7
@@ -86,3 +91,24 @@ def is_square_attacked_by(
     occupied: set[Position],
 ) -> bool:
     return target in attacked_squares(piece_type, piece_position, occupied)
+
+
+def alive_attackers_of(
+    target: Position,
+    players: Iterable[Player],
+    occupied: set[Position],
+    *,
+    exclude_user_id: int | None = None,
+) -> list[Player]:
+    """Alive players (other than ``exclude_user_id``) whose attack area
+    covers ``target`` on the given occupied board."""
+
+    attackers: list[Player] = []
+    for player in players:
+        if not player.is_active or player.position is None:
+            continue
+        if player.user_id == exclude_user_id:
+            continue
+        if target in attacked_squares(player.piece_type, player.position, occupied):
+            attackers.append(player)
+    return attackers

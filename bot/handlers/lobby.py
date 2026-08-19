@@ -41,6 +41,9 @@ async def cmd_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     manager = _manager(context)
+    if manager.get_buckshot_by_key(chat.id, topic_id) is not None:
+        await message.reply_text("В этом топике уже идёт другая игра.")
+        return
     state = manager.get_by_key(chat.id, topic_id)
 
     if state is not None and state.status == GameStatus.LOBBY:
@@ -76,6 +79,12 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     manager = _manager(context)
     lock = manager.lock_for(chat.id, topic_id)
     async with lock:
+        buckshot = manager.get_buckshot_by_key(chat.id, topic_id)
+        if buckshot is not None:
+            from ..buckshot import handlers as buckshot_handlers
+
+            await buckshot_handlers.restart_in_topic(context, chat.id, topic_id)
+            return
         state = manager.get_by_key(chat.id, topic_id)
         if state is None:
             await message.reply_text("Нет активной игры.")

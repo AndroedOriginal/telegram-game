@@ -24,6 +24,8 @@ from ..callback_data import (
     LobbyCallback,
     decode,
 )
+from ..buckshot.callbacks import is_buckshot_callback
+from ..buckshot import handlers as buckshot_handlers
 from . import game as game_handlers
 from . import lobby as lobby_handlers
 
@@ -33,6 +35,10 @@ logger = logging.getLogger(__name__)
 async def on_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None or query.data is None:
+        return
+
+    if is_buckshot_callback(query.data):
+        await buckshot_handlers.handle_callback(update, context, query.data)
         return
 
     try:

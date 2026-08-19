@@ -1,9 +1,26 @@
-# Chess Royale
+# telegram-game
 
-Chess Royale is a free-for-all, chess-themed multiplayer game played inside a
-Telegram topic. There are no teams: every player controls exactly one piece
-on a standard 8×8 board, and pieces get stronger over time by reaching
-**evolution points** left behind by other players.
+One Telegram bot, two independent games. Each running match is keyed by
+`(chat_id, topic_id)`, so Chess Royale and Buckshot Roulette can live in
+different forum topics of the same chat without sharing state.
+
+| Game | Topic (example) | Command |
+|------|-----------------|--------|
+| **Chess Royale** | its own forum topic | `/chessroyale` or `/newgame` |
+| **Buckshot Roulette** | topic `Buckshot Roulette` | `/buckshot` or `/buckshotroulette` |
+
+`/restart` and `/leave` apply to whichever game is in the **current** topic.
+
+This repository contains testable pure-Python engines, a Telegram bot UI built
+with [python-telegram-bot](https://python-telegram-bot.org/) (async, v22),
+custom Telegram emoji rendering, SQLite persistence, and an automated test suite.
+
+## Chess Royale
+
+Chess Royale is a free-for-all, chess-themed multiplayer game. There are no
+teams: every player controls exactly one piece on a standard 8×8 board, and
+pieces get stronger over time by reaching **evolution points** left behind by
+other players.
 
 ```
 Pawn → Bishop → Knight → Rook → Queen
@@ -11,11 +28,6 @@ Pawn → Bishop → Knight → Rook → Queen
 
 The last surviving player wins. If every remaining player has evolved to
 the *same* piece type, the game ends in a draw.
-
-This repository contains a complete, testable implementation: a pure-Python
-game engine, a Telegram bot UI built with
-[python-telegram-bot](https://python-telegram-bot.org/) (async, v22), custom
-Telegram emoji rendering, SQLite persistence, and an automated test suite.
 
 ## How the game works
 
@@ -42,11 +54,15 @@ Telegram emoji rendering, SQLite persistence, and an automated test suite.
     use the full classic 8-square L-shape geometry.
   - A player can never land on an occupied square (the pawn diagonal
     attack is the only exception).
-- **Check is lethal and immediate.** After a move, every other living
-  player inside the mover's attack area is eliminated at once. There is
-  no persistent check: the attacked player does not get a turn to escape.
-  Status becomes `🔈 @attacker ставит шах @victim`. If the mover is still
-  under attack after that resolution, the mover also dies.
+- **Check is lethal and immediate.** After a completed move, the destination
+  is tested against the attack areas of **all other alive players** (from
+  that resulting position). A Pawn attacks only its four adjacent diagonal
+  cells; Bishop / Rook / Queen slide until blocked; a Knight attacks all
+  eight L-shaped squares. If any alive opponent attacks that cell, the
+  mover dies at once — piece type does not matter, there is no warning,
+  and the victim is removed from the board, the info list, and the turn
+  order. Status becomes `🔈 @attacker ставит шах @victim`. Dead pieces
+  no longer attack.
 - **Turns.** Turn order is shuffled once at game start and then proceeds
   cyclically, skipping eliminated/left players. Only the active player's
   button presses do anything; everyone else's taps are silently ignored.
@@ -60,55 +76,56 @@ Telegram emoji rendering, SQLite persistence, and an automated test suite.
   Choosing a sliding-piece direction opens a second message with only the
   legal distances for that direction (e.g. `[1️⃣][2️⃣][3️⃣]`).
 
+## Buckshot Roulette
+
+A 2–4 player shotgun duel in its own topic. Players take turns using
+single-use items and must shoot themselves or another living player.
+Cartridges are blank or live; the real order is hidden. Last player with HP
+wins. Dead players leave the turn rotation and cannot be shot, but their
+inventory remains stealable with Adrenaline.
+
+Lobby: `/buckshot` → rules, join/leave, start. In-game UI is three messages:
+information (turn order, HP, status), dealer commentary, and **Действия**.
+
 ## Project structure
 
 ```
 telegram-game/
 ├── bot/
 │   ├── config.py            # env-based configuration (no secrets in code)
-│   ├── emoji_assets.py      # the ONLY place custom emoji ids are listed
-│   ├── callback_data.py     # compact callback_data encode/decode
-│   ├── manager.py           # in-memory + SQLite-backed game registry
-│   ├── game/                # pure Python game engine (no Telegram imports)
-│   │   ├── models.py        # enums & dataclasses (Player, Spawn, GameState...)
-│   │   ├── board.py         # 8x8 geometry, cell coloring
-│   │   ├── movement.py      # legal destinations per piece type
-│   │   ├── attacks.py       # attack-area geometry / check detection
-│   │   ├── evolution.py     # evolution order + spawn-usage rules
-│   │   ├── spawns.py        # random valid spawn placement/relocation
-│   │   ├── rules.py         # draw/victory detection + RU announcements
-│   │   └── engine.py        # orchestrates the full move/lobby lifecycle
-│   ├── rendering/
-│   │   ├── board_renderer.py  # board -> Telegram HTML with <tg-emoji>
-│   │   └── messages.py        # all other RU UI strings
-│   ├── database/
-│   │   ├── db.py             # SQLite connection/schema
-│   │   └── repository.py     # GameState <-> JSON (de)serialization
-│   └── handlers/
-│       ├── lobby.py          # /chessroyale, join/leave/start callbacks
-│       ├── game.py           # move callbacks, board/info message updates
-│       ├── callbacks.py      # single CallbackQueryHandler dispatcher
-│       └── keyboards.py      # InlineKeyboardMarkup builders
-├── tests/                    # pytest suite for the game engine & persistence
-├── main.py                   # bot entry point
+│   ├── emoji_assets.py      # Chess Royale custom emoji ids
+│   ├── callback_data.py     # Chess Royale callback_data encode/decode
+│   ├── manager.py           # in-memory + SQLite registry for BOTH games
+│   ├── game/                # Chess Royale engine (no Telegram imports)
+│   ├── buckshot/            # Buckshot Roulette (independent of Chess Royale)
+│   │   ├── emoji_assets.py  # Buckshot custom emoji ids only
+│   │   ├── models.py
+│   │   ├── engine.py
+│   │   ├── texts.py
+│   │   ├── persistence.py
+│   │   ├── callbacks.py
+│   │   ├── ui.py
+│   │   └── handlers.py
+│   ├── rendering/           # Chess Royale board + messages
+│   ├── database/            # shared SQLite; chess JSON load skips buckshot rows
+│   └── handlers/            # Chess Royale UI + callback dispatcher
+├── tests/
+├── main.py
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── .env.example
 └── .gitignore
 ```
 
-The game engine (`bot/game/`) never imports anything from `telegram`; it can
-be tested and reasoned about in complete isolation. `bot/handlers/` is the
-only layer that talks to the Telegram Bot API.
+Chess Royale (`bot/game/`) never imports Buckshot or Telegram. Buckshot
+(`bot/buckshot/engine.py`) never imports Chess Royale or Telegram. Callbacks
+are routed by prefix so the two games cannot operate on each other's state.
 
 ## Custom emoji assets
 
-All Telegram custom/premium emoji IDs used by the board renderer live in
-`bot/emoji_assets.py` and nowhere else. Each entry pairs a custom emoji id
-with a plain-Unicode placeholder character, and rendering uses Telegram's
-`<tg-emoji emoji-id="...">placeholder</tg-emoji>` HTML tag inside a
-rich-message Heading 6 (`sendRichMessage` / `editMessageText` with
-`InputRichMessage.html`), so no manual UTF-16 offset math is needed.
+All Telegram custom/premium emoji IDs for **Chess Royale** live in
+`bot/emoji_assets.py`. Buckshot Roulette IDs live only in
+`bot/buckshot/emoji_assets.py`. Do not mix the two packs.
 
 ## Installation
 
@@ -136,7 +153,8 @@ cp .env.example .env
 |-----------------------|-------------------------------------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`  | Bot token from [@BotFather](https://t.me/BotFather). **Required.**            |
 | `TELEGRAM_CHAT_ID`    | Numeric id of the chat the bot should operate in. Leave empty to allow any chat. |
-| `TELEGRAM_TOPIC_ID`   | `message_thread_id` of the "Chess Royale" forum topic. Optional.              |
+| `TELEGRAM_TOPIC_ID`   | Optional Chess Royale forum `message_thread_id` (documentation / pinning).    |
+| `BUCKSHOT_TOPIC_ID`   | Optional Buckshot Roulette forum `message_thread_id`. If set, `/buckshot` only works in that topic. |
 | `DATABASE_PATH`       | Path to the SQLite file used for persistence (default `chess_royale.sqlite3`). |
 
 Never commit your real `.env` file, bot token, or the SQLite database — they
@@ -148,20 +166,20 @@ are excluded via `.gitignore`.
 python main.py
 ```
 
-Inside the configured chat/topic, use:
+Inside the configured chat, open the matching forum topic and use:
 
-- `/chessroyale` (or `/newgame`) — open a new lobby with rules, a
-  join/leave panel, and a start button.
-- `/restart` — end the current lobby or match, delete game messages, and
-  open a fresh lobby.
-- `/leave` — leave an active game you are currently playing in.
+- `/chessroyale` (or `/newgame`) — Chess Royale lobby (rules, join/leave, start).
+- `/buckshot` (or `/buckshotroulette`) — Buckshot Roulette lobby in the current topic.
+- `/restart` — end the current topic's lobby or match, delete its messages, open a fresh lobby for that same game.
+- `/leave` — leave an active match in this topic.
 
-During an active game the UI is three persistent messages: information
-(with **Правила / Выйти / Ничья**), the board, and **Ходы** (direction
-buttons). Player chat messages are deleted and mirrored into the 💬 line.
+Chess Royale UI is three persistent messages: information
+(with **Правила / Выйти / Ничья**), the board, and **Ходы**.
+Buckshot Roulette UI is three persistent messages: information
+(turn order + HP + 🔈), dealer commentary, and **Действия**.
 
-Every game is keyed by `(chat_id, topic_id)`, so multiple independent games
-can run simultaneously in different topics/chats.
+Every game is keyed by `(chat_id, topic_id)`, so Chess Royale and Buckshot
+Roulette (and multiple Chess Royale topics) run independently.
 
 ## Running tests
 
@@ -170,14 +188,10 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-The suite covers pawn/bishop/knight/rook/queen movement, blockers and
-occupied-cell rules, attack detection, lethal immediate check (the
-attacked player dies and is skipped), evolution and the full spawn-activation
-lifecycle (owner restriction, activation by another player, permanent
-unlock, relocation, Queen evolution removing the point), draw votes,
-automatic Queen-draw, victory, leaving, chat mirroring, invalid moves,
-turn restrictions, stale/replayed callback rejection, and SQLite
-persistence round-trips.
+The suite covers Chess Royale (movement, lethal check, evolution, draws,
+persistence) and Buckshot Roulette (lobby limits, shotgun, items, blocks,
+adrenaline, death/leave, topic isolation). Chess Royale tests must keep
+passing when Buckshot Roulette changes.
 
 ## Design notes / deliberate interpretations
 

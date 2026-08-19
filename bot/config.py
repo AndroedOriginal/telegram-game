@@ -28,6 +28,7 @@ class Config:
     bot_token: str
     chat_id: int | None
     topic_id: int | None
+    buckshot_topic_id: int | None
     database_path: str
 
     @classmethod
@@ -37,6 +38,7 @@ class Config:
             bot_token=token,
             chat_id=_get_int_or_none("TELEGRAM_CHAT_ID"),
             topic_id=_get_int_or_none("TELEGRAM_TOPIC_ID"),
+            buckshot_topic_id=_get_int_or_none("BUCKSHOT_TOPIC_ID"),
             database_path=os.getenv("DATABASE_PATH", "chess_royale.sqlite3"),
         )
 

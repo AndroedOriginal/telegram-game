@@ -10,7 +10,7 @@ import random
 from dataclasses import dataclass, field
 
 from . import rules
-from .attacks import attacked_squares
+from .attacks import alive_attackers_of
 from .board import Position, cell_color
 from .evolution import can_use_spawn, evolution_announcement, evolve_player, mark_spawn_used
 from .movement import (
@@ -226,39 +226,30 @@ def _maybe_evolve_on_landing(state: GameState, player: Player, destination: Posi
     ensure_spawn_color_coverage(state.spawns, state.active_players())
 
 
-def _eliminate_players_in_mover_attack(state: GameState, player: Player, result: ActionResult) -> None:
-    """Check is lethal and immediate: anyone the mover now attacks dies,
-    with no chance to escape. Dead pieces leave the board, so a newly
-    opened ray can eliminate another player in the same resolution."""
+def _resolve_lethal_check_on_square(state: GameState, player: Player, result: ActionResult) -> None:
+    """After a completed action, if ``player`` stands on a square attacked
+    by any other alive player, that player dies immediately.
 
-    if not player.is_active or player.position is None:
-        return
-    while True:
-        occupied = state.occupied_positions()
-        attacks = attacked_squares(player.piece_type, player.position, occupied)
-        victims = [
-            other
-            for other in state.active_players()
-            if other.user_id != player.user_id and other.position in attacks
-        ]
-        if not victims:
-            return
-        for victim in victims:
-            victim.alive = False
-            result.announcements.append(rules.check_announcement(player, victim))
-
-
-def _kill_mover_if_still_attacked(state: GameState, player: Player, result: ActionResult) -> None:
-    """After the mover's checks are resolved, standing in a remaining
-    opponent's attack is still lethal — there is no persistent check."""
+    Attacks are computed from the resulting board. Dead pieces no longer
+    attack, and the check is against every remaining alive opponent — not
+    only a piece the mover interacted with.
+    """
 
     if not player.is_active or player.position is None:
         return
     occupied = state.occupied_positions()
-    others = [p for p in state.active_players() if p.user_id != player.user_id]
-    if any(player.position in attacked_squares(o.piece_type, o.position, occupied) for o in others):
-        player.alive = False
-        result.died = True
+    attackers = alive_attackers_of(
+        player.position,
+        state.active_players(),
+        occupied,
+        exclude_user_id=player.user_id,
+    )
+    if not attackers:
+        return
+    player.alive = False
+    result.died = True
+    for attacker in attackers:
+        result.announcements.append(rules.check_announcement(attacker, player))
 
 
 def _finalize_completed_move(state: GameState, player: Player, result: ActionResult) -> None:
@@ -275,14 +266,12 @@ def _finalize_completed_move(state: GameState, player: Player, result: ActionRes
 
 def _apply_successful_landing(state: GameState, player: Player, destination: Position, result: ActionResult) -> None:
     """Common post-move pipeline once a legal destination has been computed:
-    move, evolve, immediately eliminate anyone now in the mover's attack
-    area, then die if the mover is still under fire, then draw/victory,
-    then advance the turn past anyone who just died."""
+    move onto the destination, maybe evolve, then die immediately if that
+    resulting square is attacked by any other alive player."""
 
     player.position = destination
     _maybe_evolve_on_landing(state, player, destination, result)
-    _eliminate_players_in_mover_attack(state, player, result)
-    _kill_mover_if_still_attacked(state, player, result)
+    _resolve_lethal_check_on_square(state, player, result)
     _finalize_completed_move(state, player, result)
 
 
@@ -364,15 +353,14 @@ def select_direction(
 
 def _apply_pawn_attack(state: GameState, attacker: Player, victim: Player) -> ActionResult:
     """A pawn diagonal attack eliminates the victim without the attacker
-    moving. That is the same lethal check as any other attack: the victim
-    dies immediately, then remaining attack rays and the attacker's own
-    square are resolved."""
+    moving. The victim leaves the board immediately and no longer attacks.
+    The attacker's unmoved square is then checked against remaining alive
+    opponents: standing in their attack is still lethal."""
 
     result = ActionResult(ok=True)
     victim.alive = False
     result.announcements.append(rules.check_announcement(attacker, victim))
-    _eliminate_players_in_mover_attack(state, attacker, result)
-    _kill_mover_if_still_attacked(state, attacker, result)
+    _resolve_lethal_check_on_square(state, attacker, result)
     _finalize_completed_move(state, attacker, result)
     return result
 

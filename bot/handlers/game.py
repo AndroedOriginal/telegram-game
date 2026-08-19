@@ -403,6 +403,14 @@ async def cmd_leave_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     manager = context.bot_data["manager"]
     topic_id = message.message_thread_id
+    buckshot = manager.get_buckshot_by_key(chat.id, topic_id)
+    if buckshot is not None and buckshot.status.value == "active":
+        lock = manager.lock_for(chat.id, topic_id)
+        async with lock:
+            from ..buckshot import handlers as buckshot_handlers
+
+            await buckshot_handlers.cmd_leave(update, context, buckshot)
+        return
     state = manager.get_by_key(chat.id, topic_id)
     if state is None or state.status != GameStatus.ACTIVE:
         return

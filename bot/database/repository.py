@@ -215,6 +215,9 @@ def load_game(conn: sqlite3.Connection, chat_id: int, topic_id: int | None) -> G
     ).fetchone()
     if row is None:
         return None
+    payload = json.loads(row["state_json"])
+    if payload.get("kind") == "buckshot":
+        return None
     return state_from_json(row["state_json"])
 
 
@@ -222,7 +225,13 @@ def load_all_active(conn: sqlite3.Connection) -> list[GameState]:
     rows = conn.execute(
         "SELECT state_json FROM games WHERE status != ?", (GameStatus.FINISHED.value,)
     ).fetchall()
-    return [state_from_json(row["state_json"]) for row in rows]
+    loaded = []
+    for row in rows:
+        payload = json.loads(row["state_json"])
+        if payload.get("kind") == "buckshot":
+            continue
+        loaded.append(state_from_json(row["state_json"]))
+    return loaded
 
 
 def delete_game(conn: sqlite3.Connection, game_id: int) -> None:

@@ -1,4 +1,4 @@
-"""Entry point for the Chess Royale Telegram bot."""
+"""Entry point for the Telegram games bot (Chess Royale + Buckshot Roulette)."""
 from __future__ import annotations
 
 import logging
@@ -9,6 +9,7 @@ from bot.config import config
 from bot.handlers.callbacks import on_callback_query
 from bot.handlers.game import cmd_leave_game, on_player_chat
 from bot.handlers.lobby import cmd_new_game, cmd_restart
+from bot.buckshot.handlers import cmd_new_game as cmd_buckshot
 from bot.manager import GameManager
 
 logging.basicConfig(
@@ -28,6 +29,7 @@ def build_application() -> Application:
     application.bot_data["manager"] = GameManager(config.database_path)
 
     application.add_handler(CommandHandler(["chessroyale", "newgame"], cmd_new_game))
+    application.add_handler(CommandHandler(["buckshot", "buckshotroulette"], cmd_buckshot))
     application.add_handler(CommandHandler("restart", cmd_restart))
     application.add_handler(CommandHandler("leave", cmd_leave_game))
     application.add_handler(CallbackQueryHandler(on_callback_query))
@@ -38,7 +40,7 @@ def build_application() -> Application:
 
 def main() -> None:
     application = build_application()
-    logger.info("Chess Royale bot starting...")
+    logger.info("Telegram games bot starting (Chess Royale + Buckshot Roulette)...")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
 
