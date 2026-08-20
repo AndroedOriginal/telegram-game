@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+from telegram import BotCommand
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from bot.config import config
@@ -19,13 +20,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _post_init(application: Application) -> None:
+    await application.bot.set_my_commands(
+        [
+            BotCommand("chessroyale", "Chess Royale — открыть лобби"),
+            BotCommand("buckshotroulette", "Buckshot Roulette — открыть лобби"),
+            BotCommand("buckshot", "Buckshot Roulette — открыть лобби"),
+            BotCommand("restart", "Перезапустить игру в этом топике"),
+            BotCommand("leave", "Покинуть текущую игру"),
+        ]
+    )
+
+
 def build_application() -> Application:
     if not config.bot_token:
         raise RuntimeError(
             "TELEGRAM_BOT_TOKEN is not set. Copy .env.example to .env and fill it in."
         )
 
-    application = Application.builder().token(config.bot_token).build()
+    application = (
+        Application.builder().token(config.bot_token).post_init(_post_init).build()
+    )
     application.bot_data["manager"] = GameManager(config.database_path)
 
     application.add_handler(CommandHandler(["chessroyale", "newgame"], cmd_new_game))

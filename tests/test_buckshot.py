@@ -11,6 +11,7 @@ from bot.buckshot.models import (
     MAX_INVENTORY,
     MAX_PLAYERS,
     BlockKind,
+    EventKind,
     GameState,
     GameStatus,
     ItemType,
@@ -122,18 +123,17 @@ def test_shoot_self_blank_and_other_live():
     result = engine.shoot(state, actor.user_id, actor.user_id, seq)
     assert result.ok
     assert actor.alive
-    assert "холостого" in (state.status_line or "") or any("холостого" in a for a in result.announcements)
+    assert state.current_player().user_id == actor.user_id
+    assert any("холостого" in a for a in result.announcements)
 
-    state.turn_index = state.turn_order.index(actor.user_id)
-    # skip blocks if any
-    if state.current_player().user_id != actor.user_id:
-        return
     hp = other.hp
     state.shotgun.cartridges = [True]
     seq = state.action_seq
     result = engine.shoot(state, actor.user_id, other.user_id, seq)
     assert result.ok
     assert other.hp == hp - 1 or not other.alive
+    if actor.is_active and other.is_active:
+        assert state.current_player().user_id != actor.user_id
 
 
 def test_beer_ejects_and_keeps_turn():
@@ -198,11 +198,15 @@ def test_handcuffs_skip_in_duel():
     actor.inventory.append(ItemType.HANDCUFFS)
     engine.use_item(state, actor.user_id, ItemType.HANDCUFFS, state.action_seq)
     assert other.block == BlockKind.HANDCUFFS
-    state.shotgun.cartridges = [False, False, True]
-    engine.shoot(state, actor.user_id, actor.user_id, state.action_seq)
-    # other should have been skipped
+    uid = actor.user_id
+    state.shotgun.cartridges = [False]
+    engine.shoot(state, uid, uid, state.action_seq)
+    assert state.current_player().user_id == uid
+    assert other.block == BlockKind.HANDCUFFS
+    state.shotgun.cartridges = [False]
+    engine.shoot(state, uid, other.user_id, state.action_seq)
     assert other.block is None
-    assert state.current_player().user_id == actor.user_id or state.current_player().user_id == other.user_id
+    assert state.current_player().user_id == uid
 
 
 def test_jammer_forbidden_in_duel_allowed_in_multi():
@@ -356,6 +360,8 @@ def test_callback_prefixes_do_not_collide_with_chess():
     from bot.callback_data import decode
 
     assert is_buckshot_callback("bj:1")
+    assert is_buckshot_callback("bru:1")
+    assert is_buckshot_callback("bqt:1")
     assert not is_buckshot_callback("lj:1")
     chess = decode("lj:1")
     assert chess.kind == "lj"
@@ -399,12 +405,256 @@ def test_manager_keeps_games_in_separate_topics():
 
 
 def test_json_hides_real_sequence_from_commentary_builder():
-    from bot.buckshot.ui import commentary_html
+    from bot.buckshot.ui import shotgun_commentary_html
 
     state = _start("a", "b", rng=random.Random(23))
     state.round_intro_pending = True
     state.shotgun.cartridges = [True, False, True]
     state.shotgun_display = [False, False, True]
-    html = commentary_html(state)
+    html = shotgun_commentary_html(state)
     assert "холостых" in html
     assert "заряженных" in html
+    assert html.count("холостых") == 1
+
+
+def _other(state: GameState, actor: Player) -> Player:
+    return next(p for p in state.players if p.user_id != actor.user_id)
+
+
+def test_round_intro_emits_separate_commentary_events():
+    state = _state("a", "b")
+    result = engine.start_game(state, random.Random(24))
+    kinds = [event.kind for event in result.events]
+    item_events = [event for event in result.events if event.kind == EventKind.ITEMS]
+    assert len(item_events) == 2
+    assert item_events[0].player_id != item_events[1].player_id
+    assert kinds.count(EventKind.SHOTGUN) == 1
+    shotgun_at = kinds.index(EventKind.SHOTGUN)
+    assert kinds.index(EventKind.ITEMS) < shotgun_at
+    assert kinds[shotgun_at + 1] == EventKind.STATUS
+    assert kinds[shotgun_at + 2] == EventKind.INVENTORY
+    from bot.buckshot.ui import render_event
+
+    rendered = [render_event(state, event) for event in result.events]
+    assert all(text for text in rendered)
+    assert rendered[0] != rendered[1]
+
+
+def test_status_events_are_separate_and_ordered_for_shot():
+    state = _start("a", "b", rng=random.Random(25))
+    actor = state.current_player()
+    other = _other(state, actor)
+    other.hp = 3
+    state.shotgun.cartridges = [True]
+    result = engine.shoot(state, actor.user_id, other.user_id, state.action_seq)
+    statuses = [event.text for event in result.events if event.kind == EventKind.STATUS]
+    assert statuses[0].endswith("стреляет в @b.") or "стреляет в" in statuses[0]
+    assert any("выстрел" in text for text in statuses)
+    assert any("теряет одно" in text for text in statuses)
+    assert statuses.index(next(t for t in statuses if "стреляет" in t)) < statuses.index(
+        next(t for t in statuses if "выстрел" in t)
+    )
+
+
+def test_self_blank_preserves_turn():
+    state = _start("a", "b", rng=random.Random(26))
+    actor = state.current_player()
+    uid = actor.user_id
+    state.shotgun.cartridges = [False, True]
+    result = engine.shoot(state, uid, uid, state.action_seq)
+    assert result.ok
+    assert actor.alive
+    assert state.current_player().user_id == uid
+    assert any("холостого" in text for text in result.announcements)
+    assert not any("делает ход" in text for text in result.announcements[2:])
+
+
+def test_self_live_advances_turn():
+    state = _start("a", "b", rng=random.Random(27))
+    actor = state.current_player()
+    uid = actor.user_id
+    actor.hp = 3
+    state.shotgun.cartridges = [True, False]
+    result = engine.shoot(state, uid, uid, state.action_seq)
+    assert result.ok
+    assert actor.alive
+    assert state.current_player().user_id != uid
+    assert any("выстрел" in text for text in result.announcements)
+    assert any("делает ход" in text for text in result.announcements)
+
+
+def test_other_blank_advances_turn():
+    state = _start("a", "b", rng=random.Random(28))
+    actor = state.current_player()
+    other = next(p for p in state.active_players() if p.user_id != actor.user_id)
+    uid = actor.user_id
+    hp = other.hp
+    state.shotgun.cartridges = [False, True]
+    result = engine.shoot(state, uid, other.user_id, state.action_seq)
+    assert result.ok
+    assert other.hp == hp
+    assert state.current_player().user_id != uid
+    assert any("холостого" in text for text in result.announcements)
+
+
+def test_other_live_advances_turn():
+    state = _start("a", "b", rng=random.Random(29))
+    actor = state.current_player()
+    other = next(p for p in state.active_players() if p.user_id != actor.user_id)
+    uid = actor.user_id
+    other.hp = 3
+    state.shotgun.cartridges = [True, False]
+    result = engine.shoot(state, uid, other.user_id, state.action_seq)
+    assert result.ok
+    assert other.alive
+    assert state.current_player().user_id != uid
+    assert any("выстрел" in text for text in result.announcements)
+
+
+def test_self_live_death_does_not_keep_turn():
+    state = _start("a", "b", rng=random.Random(30))
+    actor = state.current_player()
+    uid = actor.user_id
+    actor.hp = 1
+    state.shotgun.cartridges = [True]
+    result = engine.shoot(state, uid, uid, state.action_seq)
+    assert not actor.alive
+    if result.victory:
+        assert state.status == GameStatus.FINISHED
+        assert state.winner_user_id != uid
+    else:
+        assert state.current_player() is not None
+        assert state.current_player().user_id != uid
+
+
+def test_victory_checked_before_advancing_dead_player():
+    state = _start("a", "b", rng=random.Random(31))
+    actor = state.current_player()
+    other = next(p for p in state.active_players() if p.user_id != actor.user_id)
+    other.hp = 1
+    state.shotgun.cartridges = [True]
+    result = engine.shoot(state, actor.user_id, other.user_id, state.action_seq)
+    assert result.victory
+    assert state.status == GameStatus.FINISHED
+    assert not other.alive
+    assert state.winner_user_id == actor.user_id
+    assert not any(event.kind == EventKind.INVENTORY for event in result.events if event.player_id == other.user_id)
+
+
+def test_rules_are_collapsed_quote():
+    from bot.buckshot.ui import rules_message_text
+
+    html = rules_message_text()
+    assert "blockquote expandable" in html
+    assert "Правила" in html
+    assert "Если игрок стреляет в себя и патрон холостой" in html
+    assert "ход всегда переходит к следующему" in html
+
+
+def test_info_message_has_rules_and_leave_buttons():
+    from bot.buckshot.ui import actions_keyboard, info_keyboard, info_message_html
+
+    state = _start("a", "b", rng=random.Random(32))
+    html = info_message_html(state)
+    assert "Информация по игре" in html
+    assert "\U0001f508" not in html
+    info_labels = [button.text for row in info_keyboard(state).inline_keyboard for button in row]
+    assert info_labels == ["Правила", "Выйти"]
+    action_labels = [button.text for row in actions_keyboard(state).inline_keyboard for button in row]
+    assert "Правила" not in action_labels
+    assert "Выйти" not in action_labels
+    from bot.buckshot.callbacks import QUIT, RULES, decode
+
+    rules_cb = decode(info_keyboard(state).inline_keyboard[0][0].callback_data)
+    quit_cb = decode(info_keyboard(state).inline_keyboard[0][1].callback_data)
+    assert rules_cb.kind == RULES
+    assert quit_cb.kind == QUIT
+
+
+def test_sequencer_sends_separate_messages_in_order():
+    import asyncio
+    import inspect
+    from types import SimpleNamespace
+
+    from bot.buckshot.sequencer import EVENT_DELAY_SECONDS, OutgoingMessage, send_sequence
+
+    async def _run():
+        sleeps: list[float] = []
+
+        async def fake_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        sent: list[str] = []
+
+        class Bot:
+            async def send_message(self, **kwargs):
+                sent.append(kwargs["text"])
+                return SimpleNamespace(message_id=len(sent) + 40)
+
+        state = GameState(game_id=1, chat_id=-100, topic_id=9)
+        ids = await send_sequence(
+            Bot(),
+            state,
+            [
+                OutgoingMessage("🔈 @a стреляет в @b.", parse_mode=None),
+                OutgoingMessage("☠️ выстрел.", parse_mode=None),
+                OutgoingMessage("🔈 @b теряет одно ⚡️хп.", parse_mode=None),
+            ],
+            delay=0.5,
+            sleep=fake_sleep,
+        )
+        assert sent == [
+            "🔈 @a стреляет в @b.",
+            "☠️ выстрел.",
+            "🔈 @b теряет одно ⚡️хп.",
+        ]
+        assert sleeps == [0.5, 0.5]
+        assert ids == [41, 42, 43]
+        assert state.tracked_message_ids == ids
+        assert inspect.iscoroutinefunction(send_sequence)
+        assert EVENT_DELAY_SECONDS > 0
+
+    asyncio.run(_run())
+
+
+def test_sequencer_is_async_and_does_not_block():
+    import inspect
+
+    import bot.buckshot.sequencer as seq
+
+    source = inspect.getsource(seq)
+    assert "time.sleep" not in source
+    assert "asyncio.sleep" in source
+    assert inspect.iscoroutinefunction(seq.send_sequence)
+
+
+def test_event_messages_are_tracked_for_cleanup():
+    state = _start("a", "b", rng=random.Random(33))
+    state.track_message(101)
+    state.track_message(102)
+    state.track_message(103)
+    engine.end_game(state)
+    ids = state.ui_message_ids()
+    assert 101 in ids and 102 in ids and 103 in ids
+    state.tracked_message_ids = []
+    state.info_message_id = None
+    state.actions_message_id = None
+    assert state.ui_message_ids() == []
+
+
+def test_commentary_events_render_as_separate_html_messages():
+    from bot.buckshot.ui import render_event
+
+    state = _state("a", "b")
+    result = engine.start_game(state, random.Random(34))
+    item_html = [
+        render_event(state, event)
+        for event in result.events
+        if event.kind == EventKind.ITEMS
+    ]
+    assert len(item_html) == 2
+    assert item_html[0] != item_html[1]
+    assert "берет предметы" in item_html[0]
+    assert "берет предметы" in item_html[1]
+    shotgun = next(event for event in result.events if event.kind == EventKind.SHOTGUN)
+    assert "Заряжается дробовик" in (render_event(state, shotgun) or "")

@@ -8,6 +8,8 @@ from .models import CODE_TO_ITEM, ITEM_CODE, ItemType
 JOIN = "bj"
 LEAVE = "bl"
 START = "bk"
+RULES = "bru"
+QUIT = "bqt"
 SHOOT = "bsh"
 TARGET = "btg"
 USE = "bus"
@@ -62,6 +64,8 @@ def is_buckshot_callback(data: str) -> bool:
         JOIN,
         LEAVE,
         START,
+        RULES,
+        QUIT,
         SHOOT,
         TARGET,
         USE,
@@ -82,7 +86,7 @@ def decode(data: str) -> LobbyCallback | SeqCallback:
         raise CallbackParseError("empty")
     kind = parts[0]
     try:
-        if kind in (JOIN, LEAVE, START):
+        if kind in (JOIN, LEAVE, START, RULES, QUIT):
             return LobbyCallback(kind=kind, game_id=int(parts[1]))
         game_id = int(parts[1])
         action_seq = int(parts[2])

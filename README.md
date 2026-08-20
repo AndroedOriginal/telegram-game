@@ -84,8 +84,10 @@ Cartridges are blank or live; the real order is hidden. Last player with HP
 wins. Dead players leave the turn rotation and cannot be shot, but their
 inventory remains stealable with Adrenaline.
 
-Lobby: `/buckshot` → rules, join/leave, start. In-game UI is three messages:
-information (turn order, HP, status), dealer commentary, and **Действия**.
+Lobby: `/buckshot` → rules (collapsed quote), join/leave, start. Persistent
+in-game UI is the information message (turn order, HP, **Правила / Выйти**)
+and **Действия**. Dealer commentary and 🔈 events are each sent as separate
+messages with a short delay.
 
 ## Project structure
 
@@ -102,6 +104,7 @@ telegram-game/
 │   │   ├── models.py
 │   │   ├── engine.py
 │   │   ├── texts.py
+│   │   ├── sequencer.py     # async delays between event messages
 │   │   ├── persistence.py
 │   │   ├── callbacks.py
 │   │   ├── ui.py
@@ -175,8 +178,9 @@ Inside the configured chat, open the matching forum topic and use:
 
 Chess Royale UI is three persistent messages: information
 (with **Правила / Выйти / Ничья**), the board, and **Ходы**.
-Buckshot Roulette UI is three persistent messages: information
-(turn order + HP + 🔈), dealer commentary, and **Действия**.
+Buckshot Roulette keeps a persistent information message (turn order + HP +
+**Правила / Выйти**) and **Действия**. Dealer commentary and 🔈 events are
+separate sequential messages, not edits of a single log.
 
 Every game is keyed by `(chat_id, topic_id)`, so Chess Royale and Buckshot
 Roulette (and multiple Chess Royale topics) run independently.

@@ -70,6 +70,26 @@ class GameStatus(enum.Enum):
     FINISHED = "finished"
 
 
+class EventKind(enum.Enum):
+    STATUS = "status"
+    ITEMS = "items"
+    SHOTGUN = "shotgun"
+    INVENTORY = "inventory"
+    LOOK = "look"
+    STEAL = "steal"
+
+
+@dataclass
+class GameEvent:
+    kind: EventKind
+    text: str = ""
+    player_id: int | None = None
+    other_id: int | None = None
+    items: list[ItemType] = field(default_factory=list)
+    no_space: bool = False
+    item: ItemType | None = None
+
+
 class PendingKind(enum.Enum):
     SHOOT_TARGET = "shoot_target"
     USE_ITEM = "use_item"

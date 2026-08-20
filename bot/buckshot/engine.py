@@ -17,6 +17,8 @@ from .models import (
     MIN_PLAYERS,
     MIN_ROUND_HP,
     BlockKind,
+    EventKind,
+    GameEvent,
     GameState,
     GameStatus,
     ItemType,
@@ -33,6 +35,7 @@ class ActionResult:
     reason: str | None = None
     invalid: bool = False
     announcements: list[str] = field(default_factory=list)
+    events: list[GameEvent] = field(default_factory=list)
     died: bool = False
     victory: bool = False
     pending: PendingAction | None = None
@@ -43,6 +46,7 @@ class ActionResult:
     item_used: ItemType | None = None
     stolen_item: ItemType | None = None
     stolen_from: int | None = None
+    ui_sync_at: int | None = None
 
 
 def allowed_item_types(player_count: int) -> list[ItemType]:
@@ -60,22 +64,14 @@ def unique_item_types(inventory: list[ItemType]) -> list[ItemType]:
     return seen
 
 
-def _set_status(state: GameState, text: str) -> None:
+def _status(state: GameState, result: ActionResult, text: str) -> None:
+    result.announcements.append(text)
+    result.events.append(GameEvent(kind=EventKind.STATUS, text=text))
     state.status_line = text
 
 
-def _apply_status(state: GameState, result: ActionResult) -> None:
-    if result.victory and result.announcements:
-        for text in result.announcements:
-            if "побеждает" in text:
-                _set_status(state, text)
-                return
-    if result.announcements:
-        _set_status(state, result.announcements[-1])
-        return
-    current = state.current_player()
-    if state.status == GameStatus.ACTIVE and current is not None and current.is_active:
-        _set_status(state, texts.turn_announcement(current))
+def _emit(result: ActionResult, event: GameEvent) -> None:
+    result.events.append(event)
 
 
 def _bump(state: GameState) -> None:
@@ -106,7 +102,7 @@ def join_lobby(state: GameState, user_id: int, username: str | None, display_nam
     )
     state.players.append(player)
     result = ActionResult(ok=True)
-    result.announcements.append(texts.lobby_join(player))
+    _status(state, result, texts.lobby_join(player))
     return result
 
 
@@ -119,9 +115,9 @@ def leave_lobby(state: GameState, user_id: int) -> ActionResult:
     state.players.remove(player)
     result = ActionResult(ok=True)
     if len(state.players) < MIN_PLAYERS:
-        result.announcements.append(texts.not_enough_players())
+        _status(state, result, texts.not_enough_players())
     else:
-        result.announcements.append(texts.lobby_leave(player))
+        _status(state, result, texts.lobby_leave(player))
     return result
 
 
@@ -144,6 +140,24 @@ def _deal_items(state: GameState, rng: random.Random) -> None:
         state.last_item_drops[player.user_id] = received
         if no_space or (count > 0 and len(received) < count and len(player.inventory) >= MAX_INVENTORY):
             state.last_no_space.add(player.user_id)
+
+
+def _emit_round_intro(state: GameState, result: ActionResult) -> None:
+    for player in state.players_in_turn_order():
+        if not player.is_active:
+            continue
+        received = list(state.last_item_drops.get(player.user_id) or [])
+        _emit(
+            result,
+            GameEvent(
+                kind=EventKind.ITEMS,
+                player_id=player.user_id,
+                items=received,
+                no_space=player.user_id in state.last_no_space,
+            ),
+        )
+    _emit(result, GameEvent(kind=EventKind.SHOTGUN))
+    state.round_intro_pending = False
 
 
 def load_shotgun(rng: random.Random, total: int | None = None) -> tuple[Shotgun, list[bool]]:
@@ -197,9 +211,8 @@ def _check_victory(state: GameState, result: ActionResult) -> bool:
         state.status = GameStatus.FINISHED
         state.winner_user_id = winner.user_id
         result.victory = True
-        result.announcements.append(texts.victory_announcement(winner))
         result.open_lobby = True
-        _set_status(state, texts.victory_announcement(winner))
+        _status(state, result, texts.victory_announcement(winner))
         return True
     if len(alive) == 0:
         state.status = GameStatus.FINISHED
@@ -212,7 +225,7 @@ def _kill(state: GameState, player: Player, result: ActionResult) -> None:
     player.alive = False
     player.block = None
     result.died = True
-    result.announcements.append(texts.dies_announcement(player))
+    _status(state, result, texts.dies_announcement(player))
 
 
 def _damage(state: GameState, player: Player, amount: int, result: ActionResult) -> None:
@@ -220,24 +233,23 @@ def _damage(state: GameState, player: Player, amount: int, result: ActionResult)
         return
     player.hp = max(0, player.hp - amount)
     if amount >= 2:
-        result.announcements.append(texts.lose_two_hp(player))
+        _status(state, result, texts.lose_two_hp(player))
     else:
-        result.announcements.append(texts.lose_one_hp(player))
+        _status(state, result, texts.lose_one_hp(player))
     if player.hp <= 0:
         _kill(state, player, result)
 
 
-def _heal(player: Player, amount: int, cap: int, result: ActionResult) -> None:
+def _heal(state: GameState, player: Player, amount: int, cap: int, result: ActionResult) -> None:
     if amount <= 0:
         return
     before = player.hp
     player.hp = min(cap, player.hp + amount)
-    gained = player.hp - before
     if amount >= 2:
-        result.announcements.append(texts.restore_two_hp(player))
+        _status(state, result, texts.restore_two_hp(player))
     else:
-        result.announcements.append(texts.restore_one_hp(player))
-    if gained == 0:
+        _status(state, result, texts.restore_one_hp(player))
+    if player.hp == before:
         return
 
 
@@ -274,17 +286,16 @@ def begin_current_turn(state: GameState, result: ActionResult | None = None) -> 
             _advance_index(state)
             continue
         if player.block is not None:
-            result.announcements.append(texts.skip_turn(player))
+            _status(state, result, texts.skip_turn(player))
             player.block = None
             _advance_index(state)
             continue
         state.pending = None
         state.looking_at_user_id = player.user_id
         _set_own_inventory_commentary(state)
-        result.announcements.append(texts.turn_announcement(player))
-        _apply_status(state, result)
+        _status(state, result, texts.turn_announcement(player))
+        _emit(result, GameEvent(kind=EventKind.INVENTORY, player_id=player.user_id))
         return result
-    _apply_status(state, result)
     return result
 
 
@@ -309,6 +320,8 @@ def start_game(state: GameState, rng: random.Random | None = None) -> ActionResu
     state.status = GameStatus.ACTIVE
     _begin_round(state, rng)
     result = ActionResult(ok=True)
+    _emit_round_intro(state, result)
+    result.ui_sync_at = len(result.events)
     begin_current_turn(state, result)
     return result
 
@@ -326,10 +339,11 @@ def _ensure_actor(state: GameState, user_id: int, action_seq: int | None) -> tup
     return current, None
 
 
-def _maybe_reload(state: GameState, rng: random.Random) -> None:
+def _maybe_reload(state: GameState, rng: random.Random, result: ActionResult) -> None:
     if state.shotgun.cartridges:
         return
     _begin_round(state, rng)
+    _emit_round_intro(state, result)
 
 
 def open_shoot(state: GameState, user_id: int, action_seq: int) -> ActionResult:
@@ -341,8 +355,7 @@ def open_shoot(state: GameState, user_id: int, action_seq: int) -> ActionResult:
         kind=PendingKind.SHOOT_TARGET, user_id=user_id, action_seq=state.action_seq
     )
     result = ActionResult(ok=True, pending=state.pending)
-    result.announcements.append(texts.shotgun_pickup_announcement(player))
-    _apply_status(state, result)
+    _status(state, result, texts.shotgun_pickup_announcement(player))
     return result
 
 
@@ -354,36 +367,42 @@ def shoot(state: GameState, user_id: int, target_id: int, action_seq: int, rng: 
     target = state.get_player(target_id)
     if target is None or not target.is_active:
         return ActionResult(ok=False, reason="bad_target", invalid=True)
+    result = ActionResult(ok=True)
     if not state.shotgun.cartridges:
-        _maybe_reload(state, rng)
+        _maybe_reload(state, rng, result)
         if not state.shotgun.cartridges:
             return ActionResult(ok=False, reason="empty_shotgun")
 
-    result = ActionResult(ok=True)
-    if target.user_id == player.user_id:
-        result.announcements.append(texts.shoots_self_announcement(player))
+    self_shot = target.user_id == player.user_id
+    if self_shot:
+        _status(state, result, texts.shoots_self_announcement(player))
     else:
-        result.announcements.append(texts.shoots_other_announcement(player, target))
+        _status(state, result, texts.shoots_other_announcement(player, target))
 
     live = state.shotgun.pop()
     doubled = state.shotgun.knife_active
     state.shotgun.knife_active = False
     state.round_intro_pending = False
     if live:
-        result.announcements.append(texts.live_shot())
+        _status(state, result, texts.live_shot())
         amount = 2 if doubled else 1
         _damage(state, target, amount, result)
     else:
-        result.announcements.append(texts.blank_click())
+        _status(state, result, texts.blank_click())
 
     _bump(state)
     if _check_victory(state, result):
-        _apply_status(state, result)
         return result
-    _maybe_reload(state, rng)
-    if player.is_active:
-        _advance_index(state)
-    begin_current_turn(state, result)
+
+    keep_turn = self_shot and not live and player.is_active
+    _maybe_reload(state, rng, result)
+    result.ui_sync_at = len(result.events)
+    if keep_turn:
+        _set_own_inventory_commentary(state)
+    else:
+        if player.is_active:
+            _advance_index(state)
+        begin_current_turn(state, result)
     result.delete_magnify = True
     return result
 
@@ -397,8 +416,7 @@ def open_use_item(state: GameState, user_id: int, action_seq: int) -> ActionResu
     _bump(state)
     state.pending = PendingAction(kind=PendingKind.USE_ITEM, user_id=user_id, action_seq=state.action_seq)
     result = ActionResult(ok=True, pending=state.pending)
-    result.announcements.append(texts.inventory_announcement(player))
-    _apply_status(state, result)
+    _status(state, result, texts.inventory_announcement(player))
     return result
 
 
@@ -428,7 +446,12 @@ def inspect_player(state: GameState, user_id: int, target_id: int, action_seq: i
         action_seq=state.action_seq,
         target_user_id=target_id,
     )
-    return ActionResult(ok=True, pending=state.pending)
+    result = ActionResult(ok=True, pending=state.pending)
+    _emit(
+        result,
+        GameEvent(kind=EventKind.LOOK, player_id=player.user_id, other_id=target.user_id),
+    )
+    return result
 
 
 def inspect_back(state: GameState, user_id: int, action_seq: int) -> ActionResult:
@@ -437,7 +460,9 @@ def inspect_back(state: GameState, user_id: int, action_seq: int) -> ActionResul
         return ActionResult(ok=False, reason=error)
     _set_own_inventory_commentary(state)
     state.pending = None
-    return ActionResult(ok=True)
+    result = ActionResult(ok=True)
+    _emit(result, GameEvent(kind=EventKind.INVENTORY, player_id=user_id))
+    return result
 
 
 def _start_item_flow(
@@ -453,14 +478,22 @@ def _start_item_flow(
     if stolen_from is not None:
         result.stolen_item = item
         result.stolen_from = stolen_from.user_id
-        result.announcements.append(texts.steals(actor, texts.item_name(item), stolen_from))
+        _status(state, result, texts.steals(actor, texts.item_name(item), stolen_from))
+        _emit(
+            result,
+            GameEvent(
+                kind=EventKind.STEAL,
+                player_id=actor.user_id,
+                other_id=stolen_from.user_id,
+                item=item,
+            ),
+        )
 
     if item == ItemType.BEER:
         return _use_beer(state, actor, result, rng)
     if item == ItemType.INVERTER:
         state.shotgun.invert_current()
         _bump(state)
-        _apply_status(state, result)
         return result
     if item == ItemType.MAGNIFYING_GLASS:
         _bump(state)
@@ -468,12 +501,10 @@ def _start_item_flow(
             kind=PendingKind.MAGNIFY, user_id=actor.user_id, action_seq=state.action_seq
         )
         result.pending = state.pending
-        _apply_status(state, result)
         return result
     if item == ItemType.CIGARETTES:
-        _heal(actor, 1, state.round_max_hp, result)
+        _heal(state, actor, 1, state.round_max_hp, result)
         _bump(state)
-        _apply_status(state, result)
         return result
     if item == ItemType.HANDCUFFS:
         opponents = [p for p in state.active_players() if p.user_id != actor.user_id]
@@ -486,12 +517,10 @@ def _start_item_flow(
             kind=PendingKind.JAMMER_TARGET, user_id=actor.user_id, action_seq=state.action_seq
         )
         result.pending = state.pending
-        _apply_status(state, result)
         return result
     if item == ItemType.KNIFE:
         state.shotgun.knife_active = True
         _bump(state)
-        _apply_status(state, result)
         return result
     if item == ItemType.EXPIRED_PILLS:
         return _use_pills(state, actor, result, rng)
@@ -514,47 +543,42 @@ def _start_item_flow(
                 action_seq=state.action_seq,
             )
         result.pending = state.pending
-        _apply_status(state, result)
         return result
     if item == ItemType.REMOTE:
         state.turn_direction *= -1
         _bump(state)
-        _apply_status(state, result)
         return result
     return ActionResult(ok=False, reason="unknown_item")
 
 
 def _use_beer(state: GameState, actor: Player, result: ActionResult, rng: random.Random) -> ActionResult:
     if not state.shotgun.cartridges:
-        _maybe_reload(state, rng)
+        _maybe_reload(state, rng, result)
     if not state.shotgun.cartridges:
         return ActionResult(ok=False, reason="empty_shotgun")
     live = state.shotgun.pop()
     state.shotgun.knife_active = False
-    result.announcements.append(texts.live_ejected() if live else texts.blank_ejected())
+    _status(state, result, texts.live_ejected() if live else texts.blank_ejected())
     _bump(state)
     if _check_victory(state, result):
-        _apply_status(state, result)
         return result
-    _maybe_reload(state, rng)
+    _maybe_reload(state, rng, result)
     _set_own_inventory_commentary(state)
-    _apply_status(state, result)
     return result
 
 
 def _use_pills(state: GameState, actor: Player, result: ActionResult, rng: random.Random) -> ActionResult:
     if rng.random() < 0.5:
-        _heal(actor, 2, state.round_max_hp, result)
+        _heal(state, actor, 2, state.round_max_hp, result)
     else:
         _damage(state, actor, 1, result)
     _bump(state)
     if _check_victory(state, result):
-        _apply_status(state, result)
         return result
+    result.ui_sync_at = len(result.events)
     if not actor.is_active:
         begin_current_turn(state, result)
         return result
-    _apply_status(state, result)
     return result
 
 
@@ -564,9 +588,8 @@ def _apply_block(
     if not target.is_active or target.user_id == actor.user_id:
         return ActionResult(ok=False, reason="bad_target", invalid=True)
     target.block = kind
-    result.announcements.append(texts.blocks(actor, target))
+    _status(state, result, texts.blocks(actor, target))
     _bump(state)
-    _apply_status(state, result)
     return result
 
 
@@ -690,15 +713,13 @@ def leave_game(state: GameState, user_id: int) -> ActionResult:
     player.block = None
     player.inventory = []
     result = ActionResult(ok=True)
-    result.announcements.append(texts.leave_announcement(player))
+    _status(state, result, texts.leave_announcement(player))
     if _check_victory(state, result):
-        _apply_status(state, result)
         return result
     _bump(state)
+    result.ui_sync_at = len(result.events)
     if was_current:
         begin_current_turn(state, result)
-    else:
-        _apply_status(state, result)
     return result
 
 
@@ -706,7 +727,7 @@ def end_game(state: GameState) -> ActionResult:
     state.status = GameStatus.FINISHED
     state.pending = None
     result = ActionResult(ok=True, open_lobby=True)
-    _set_status(state, "\U0001f508 Игра завершена.")
+    _status(state, result, "\U0001f508 Игра завершена.")
     return result
 
 

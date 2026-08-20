@@ -25,11 +25,13 @@ from .emoji_assets import (
 from .models import (
     ITEM_NAME_RU,
     BlockKind,
+    EventKind,
+    GameEvent,
     GameState,
     ItemType,
     Player,
 )
-from .texts import RULES_FULL, item_name
+from .texts import RULES_ALERT, RULES_FULL, item_name
 
 ITEM_EMOJI = {
     ItemType.BEER: beer,
@@ -58,12 +60,18 @@ def hp_html(count: int) -> str:
     return "".join(token for _ in range(max(0, count)))
 
 
-def html_quote(inner: str) -> str:
-    return f"<blockquote>{inner}</blockquote>"
+def html_quote(inner: str, *, expandable: bool = False) -> str:
+    attr = " expandable" if expandable else ""
+    return f"<blockquote{attr}>{inner}</blockquote>"
 
 
 def rules_message_text() -> str:
-    return f"\U0001f50e Правила игры:\n\n{html_quote(escape(RULES_FULL))}"
+    quoted = "Правила\n\n" + escape(RULES_FULL)
+    return f"\U0001f50e Правила игры:\n\n{html_quote(quoted, expandable=True)}"
+
+
+def rules_alert_text() -> str:
+    return RULES_ALERT[:200]
 
 
 def lobby_message_text(count: int) -> str:
@@ -105,8 +113,7 @@ def info_message_html(state: GameState) -> str:
             continue
         lines.append(player_line_html(player, current_id))
     body = "\n".join(lines) if lines else "—"
-    status = escape(state.status_line or "\U0001f508")
-    return f"\U0001f4ce Информация по игре:\n\n{html_quote(body)}\n\n{status}"
+    return f"\U0001f4ce Информация по игре:\n\n{html_quote(body)}"
 
 
 def _item_lines(inventory: list[ItemType], bullet: str) -> str:
@@ -115,54 +122,83 @@ def _item_lines(inventory: list[ItemType], bullet: str) -> str:
     return "\n".join(f"{bullet} {item_label_html(item)}." for item in inventory)
 
 
+def items_commentary_html(player: Player, items: list[ItemType], no_space: bool) -> str:
+    block = [f"{escape(player.mention)} берет предметы:"]
+    if items:
+        block.extend(f"+ {item_label_html(item)}." for item in items)
+    if no_space:
+        block.append("Нет места.")
+    if not items and not no_space:
+        block.append("пусто")
+    return "\n".join(block)
+
+
+def shotgun_commentary_html(state: GameState) -> str:
+    display = "".join(
+        live_cartridge().to_html() if live else blank_cartridge().to_html()
+        for live in state.shotgun_display
+    )
+    live_count = sum(1 for live in state.shotgun_display if live)
+    blank_count = len(state.shotgun_display) - live_count
+    gun = shotgun().to_html()
+    return (
+        f"{gun} Заряжается дробовик:\n\n{display}\n\n"
+        f"холостых — {blank_count}\nзаряженных — {live_count}"
+    )
+
+
+def inventory_commentary_html(player: Player) -> str:
+    return f"Инвентарь {escape(player.mention)}:\n{_item_lines(player.inventory, '•')}"
+
+
+def look_commentary_html(viewer: Player, other: Player) -> str:
+    return (
+        f"{escape(viewer.mention)} смотрит инвентарь {escape(other.mention)}:\n"
+        f"{_item_lines(other.inventory, '•')}"
+    )
+
+
 def commentary_html(state: GameState) -> str:
-    parts: list[str] = []
-    if state.round_intro_pending:
-        for player in state.players_in_turn_order():
-            if not player.is_active:
-                continue
-            received = state.last_item_drops.get(player.user_id) or []
-            block = [f"{escape(player.mention)} берет предметы:"]
-            if received:
-                block.extend(f"+ {item_label_html(item)}." for item in received)
-            if player.user_id in state.last_no_space:
-                block.append("Нет места.")
-            if not received and player.user_id not in state.last_no_space:
-                block.append("пусто")
-            parts.append("\n".join(block))
-        display = "".join(
-            live_cartridge().to_html() if live else blank_cartridge().to_html()
-            for live in state.shotgun_display
-        )
-        live_count = sum(1 for live in state.shotgun_display if live)
-        blank_count = len(state.shotgun_display) - live_count
-        gun = shotgun().to_html()
-        parts.append(
-            f"{gun} Заряжается дробовик:\n\n{display}\n\n"
-            f"холостых — {blank_count}\nзаряженных — {live_count}"
-        )
-    pending = state.pending
-    look_id = state.looking_at_user_id
+    """Render the current-player inventory commentary (state 4)."""
     current = state.current_player()
-    if pending is not None and pending.kind.value == "adrenaline_item" and pending.target_user_id:
-        thief = current
-        victim = state.get_player(pending.target_user_id)
-        if thief is not None and victim is not None:
-            # steal commentary is applied after the steal; until then show target items via handler buttons
-            pass
-    if look_id is not None and current is not None and look_id != current.user_id:
+    if current is None:
+        return "\U0001f508"
+    look_id = state.looking_at_user_id
+    if look_id is not None and look_id != current.user_id:
         other = state.get_player(look_id)
         if other is not None:
-            parts.append(
-                f"{escape(current.mention)} смотрит инвентарь {escape(other.mention)}:\n"
-                f"{_item_lines(other.inventory, '•')}"
-            )
-            return "\n\n".join(parts)
-    if current is not None and current.is_active:
-        parts.append(
-            f"Инвентарь {escape(current.mention)}:\n{_item_lines(current.inventory, '•')}"
-        )
-    return "\n\n".join(parts) if parts else "\U0001f508"
+            return look_commentary_html(current, other)
+    return inventory_commentary_html(current)
+
+
+def render_event(state: GameState, event: GameEvent) -> str | None:
+    if event.kind == EventKind.STATUS:
+        return event.text
+    if event.kind == EventKind.ITEMS:
+        player = state.get_player(event.player_id or -1)
+        if player is None:
+            return None
+        return items_commentary_html(player, event.items, event.no_space)
+    if event.kind == EventKind.SHOTGUN:
+        return shotgun_commentary_html(state)
+    if event.kind == EventKind.INVENTORY:
+        player = state.get_player(event.player_id or -1)
+        if player is None:
+            return None
+        return inventory_commentary_html(player)
+    if event.kind == EventKind.LOOK:
+        viewer = state.get_player(event.player_id or -1)
+        other = state.get_player(event.other_id or -1)
+        if viewer is None or other is None:
+            return None
+        return look_commentary_html(viewer, other)
+    if event.kind == EventKind.STEAL:
+        thief = state.get_player(event.player_id or -1)
+        victim = state.get_player(event.other_id or -1)
+        if thief is None or victim is None or event.item is None:
+            return None
+        return steal_commentary_html(thief, victim, event.item)
+    return None
 
 
 def steal_commentary_html(thief: Player, victim: Player, item: ItemType) -> str:
@@ -193,6 +229,23 @@ def lobby_keyboard(game_id: int) -> InlineKeyboardMarkup:
 def start_keyboard(game_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("тык", callback_data=callbacks.encode_lobby(callbacks.START, game_id))]]
+    )
+
+
+def info_keyboard(state: GameState) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Правила",
+                    callback_data=callbacks.encode_lobby(callbacks.RULES, state.game_id),
+                ),
+                InlineKeyboardButton(
+                    "Выйти",
+                    callback_data=callbacks.encode_lobby(callbacks.QUIT, state.game_id),
+                ),
+            ]
+        ]
     )
 
 

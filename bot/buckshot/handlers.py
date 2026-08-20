@@ -13,8 +13,11 @@ from ..handlers.lobby import display_name_for, is_allowed_chat
 from ..handlers.telegram_safe import telegram_retry
 from . import callbacks
 from . import engine
+from . import sequencer
 from . import ui
 from .engine import ActionResult
+from .models import EventKind, GameState, GameStatus, PendingKind
+from .sequencer import OutgoingMessage
 from .texts import not_enough_players
 
 logger = logging.getLogger(__name__)
@@ -81,57 +84,81 @@ async def _edit_or_send(bot, chat_id, message_id, topic_id, text, markup=None, p
     return None if msg is None else msg.message_id
 
 
-async def _refresh_ui(bot, state: GameState, result: ActionResult | None = None) -> None:
+async def _delete_temps(bot, state: GameState) -> None:
+    ids = list(state.temp_message_ids)
+    state.temp_message_ids = []
+    for message_id in ids:
+        try:
+            await bot.delete_message(chat_id=state.chat_id, message_id=message_id)
+        except Exception:
+            pass
+
+
+def _pending_markup(state: GameState):
+    pending = state.pending
+    if pending is None:
+        return None, None
+    if pending.kind == PendingKind.SHOOT_TARGET:
+        return "Цель:", ui.target_keyboard(state, callbacks.TARGET, include_self=True, exclude_self=True)
+    if pending.kind == PendingKind.USE_ITEM:
+        current = state.current_player()
+        if current is None:
+            return None, None
+        return "Предмет:", ui.item_keyboard(state, current.inventory, callbacks.ITEM)
+    if pending.kind == PendingKind.JAMMER_TARGET:
+        return "Цель:", ui.target_keyboard(state, callbacks.JAMMER, include_self=False)
+    if pending.kind == PendingKind.ADRENALINE_TARGET:
+        return "Цель:", _steal_target_keyboard(state)
+    if pending.kind == PendingKind.ADRENALINE_ITEM:
+        target = state.get_player(pending.target_user_id) if pending.target_user_id else None
+        if target is None:
+            return None, None
+        return "Предмет:", ui.item_keyboard(state, target.inventory, callbacks.ADR_ITEM)
+    if pending.kind == PendingKind.INSPECT_TARGET and pending.target_user_id:
+        return "\u2190", ui.inspect_back_keyboard(state)
+    if pending.kind == PendingKind.INSPECT_TARGET:
+        return "Цель:", ui.target_keyboard(state, callbacks.LOOK, include_self=False)
+    return None, None
+
+
+def _outgoing_for_events(state: GameState, events) -> list[OutgoingMessage]:
+    messages: list[OutgoingMessage] = []
+    for event in events:
+        text = ui.render_event(state, event)
+        if not text:
+            continue
+        parse_mode = None if event.kind == EventKind.STATUS else ParseMode.HTML
+        messages.append(OutgoingMessage(text=text, parse_mode=parse_mode))
+    return messages
+
+
+async def _publish_events(bot, state: GameState, result: ActionResult) -> None:
+    events = list(result.events)
+    split = result.ui_sync_at
+    if split is None or split < 0 or split > len(events):
+        await sequencer.send_sequence(bot, state, _outgoing_for_events(state, events))
+        return
+    await sequencer.send_sequence(bot, state, _outgoing_for_events(state, events[:split]))
+    if state.status == GameStatus.ACTIVE:
+        await _refresh_persistent_ui(bot, state)
+    await sequencer.send_sequence(bot, state, _outgoing_for_events(state, events[split:]))
+
+
+async def _refresh_persistent_ui(bot, state: GameState) -> None:
     if state.status != GameStatus.ACTIVE:
         return
-    markup = None
-    pending = state.pending
-    if pending is not None:
-        if pending.kind == PendingKind.SHOOT_TARGET:
-            markup = ui.target_keyboard(state, callbacks.TARGET, include_self=True, exclude_self=True)
-        elif pending.kind == PendingKind.USE_ITEM:
-            current = state.current_player()
-            if current is not None:
-                markup = ui.item_keyboard(state, current.inventory, callbacks.ITEM)
-        elif pending.kind == PendingKind.JAMMER_TARGET:
-            markup = ui.target_keyboard(state, callbacks.JAMMER, include_self=False)
-        elif pending.kind == PendingKind.ADRENALINE_TARGET:
-            # stealable including dead
-            buttons_state = state
-            markup = _steal_target_keyboard(buttons_state)
-        elif pending.kind == PendingKind.ADRENALINE_ITEM:
-            target = state.get_player(pending.target_user_id) if pending.target_user_id else None
-            if target is not None:
-                markup = ui.item_keyboard(state, target.inventory, callbacks.ADR_ITEM)
-        elif pending.kind == PendingKind.INSPECT_TARGET and pending.target_user_id:
-            markup = ui.inspect_back_keyboard(state)
-        elif pending.kind == PendingKind.INSPECT_TARGET:
-            markup = ui.target_keyboard(state, callbacks.LOOK, include_self=False)
-
-    commentary = ui.commentary_html(state)
-    if result is not None and result.stolen_item is not None and result.stolen_from is not None:
-        thief = state.current_player()
-        victim = state.get_player(result.stolen_from)
-        if thief is not None and victim is not None:
-            commentary = ui.steal_commentary_html(thief, victim, result.stolen_item)
-
+    await _delete_temps(bot, state)
     info_id = await _edit_or_send(
-        bot, state.chat_id, state.info_message_id, state.topic_id, ui.info_message_html(state)
+        bot,
+        state.chat_id,
+        state.info_message_id,
+        state.topic_id,
+        ui.info_message_html(state),
+        markup=ui.info_keyboard(state),
     )
     if info_id:
         state.info_message_id = info_id
         state.track_message(info_id)
-    comm_id = await _edit_or_send(
-        bot,
-        state.chat_id,
-        state.commentary_message_id,
-        state.topic_id,
-        commentary,
-        markup=markup,
-    )
-    if comm_id:
-        state.commentary_message_id = comm_id
-        state.track_message(comm_id)
     act_id = await _edit_or_send(
         bot,
         state.chat_id,
@@ -145,6 +172,8 @@ async def _refresh_ui(bot, state: GameState, result: ActionResult | None = None)
         state.actions_message_id = act_id
         state.track_message(act_id)
 
+    caption, markup = _pending_markup(state)
+    pending = state.pending
     if pending is not None and pending.kind == PendingKind.MAGNIFY and state.magnify_message_id is None:
         msg = await telegram_retry(
             lambda: bot.send_message(
@@ -157,6 +186,21 @@ async def _refresh_ui(bot, state: GameState, result: ActionResult | None = None)
         if msg is not None:
             state.magnify_message_id = msg.message_id
             state.track_message(msg.message_id)
+        return
+    if markup is None:
+        return
+    text = caption or " "
+    msg = await telegram_retry(
+        lambda: bot.send_message(
+            chat_id=state.chat_id,
+            message_thread_id=state.topic_id,
+            text=text,
+            reply_markup=markup,
+        )
+    )
+    if msg is not None:
+        state.temp_message_ids.append(msg.message_id)
+        state.track_message(msg.message_id)
 
 
 def _steal_target_keyboard(state: GameState):
@@ -208,19 +252,13 @@ async def send_lobby_messages(context, state: GameState) -> None:
         text=ui.start_button_message_text(),
         reply_markup=ui.start_keyboard(state.game_id),
     )
-    announce = await bot.send_message(
-        chat_id=state.chat_id,
-        message_thread_id=state.topic_id,
-        text=ui.announce_placeholder(),
-    )
     state.rules_message_id = rules.message_id
     state.lobby_message_id = lobby.message_id
     state.start_message_id = start.message_id
-    state.announce_message_id = announce.message_id
+    state.announce_message_id = None
     state.track_message(rules.message_id)
     state.track_message(lobby.message_id)
     state.track_message(start.message_id)
-    state.track_message(announce.message_id)
 
 
 async def send_game_messages(bot, state: GameState) -> None:
@@ -228,12 +266,7 @@ async def send_game_messages(bot, state: GameState) -> None:
         chat_id=state.chat_id,
         message_thread_id=state.topic_id,
         text=ui.info_message_html(state),
-        parse_mode=ParseMode.HTML,
-    )
-    commentary = await bot.send_message(
-        chat_id=state.chat_id,
-        message_thread_id=state.topic_id,
-        text=ui.commentary_html(state),
+        reply_markup=ui.info_keyboard(state),
         parse_mode=ParseMode.HTML,
     )
     actions = await bot.send_message(
@@ -243,10 +276,9 @@ async def send_game_messages(bot, state: GameState) -> None:
         reply_markup=ui.actions_keyboard(state),
     )
     state.info_message_id = info.message_id
-    state.commentary_message_id = commentary.message_id
+    state.commentary_message_id = None
     state.actions_message_id = actions.message_id
     state.track_message(info.message_id)
-    state.track_message(commentary.message_id)
     state.track_message(actions.message_id)
 
 
@@ -269,9 +301,13 @@ async def cmd_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if state is not None and state.status == GameStatus.ACTIVE:
         await message.reply_text("Игра уже идёт в этом топике.")
         return
-    state = manager.create_buckshot(chat.id, topic_id)
-    await send_lobby_messages(context, state)
-    manager.save_buckshot(state)
+    try:
+        state = manager.create_buckshot(chat.id, topic_id)
+        await send_lobby_messages(context, state)
+        manager.save_buckshot(state)
+    except Exception:
+        logger.exception("Failed to open Buckshot Roulette lobby")
+        await message.reply_text("Не удалось открыть лобби Buckshot Roulette.")
 
 
 async def restart_in_topic(context, chat_id: int, topic_id: int | None) -> GameState:
@@ -291,6 +327,7 @@ async def _after_action(context, state: GameState, result: ActionResult) -> None
     manager = _manager(context)
     if result.delete_magnify:
         await _delete_magnify(context.bot, state)
+    await _publish_events(context.bot, state, result)
     if result.victory or result.open_lobby:
         await _delete_ids(context.bot, state)
         manager.save_buckshot(state)
@@ -298,7 +335,7 @@ async def _after_action(context, state: GameState, result: ActionResult) -> None
         await send_lobby_messages(context, new_state)
         manager.save_buckshot(new_state)
         return
-    await _refresh_ui(context.bot, state, result)
+    await _refresh_persistent_ui(context.bot, state)
     manager.save_buckshot(state)
 
 
@@ -325,6 +362,32 @@ async def _dispatch(update, context, state: GameState, callback) -> None:
     manager = _manager(context)
 
     if isinstance(callback, callbacks.LobbyCallback):
+        if callback.kind == callbacks.RULES:
+            await query.answer(text=ui.rules_alert_text(), show_alert=True)
+            if state.status == GameStatus.ACTIVE:
+                msg = await telegram_retry(
+                    lambda: context.bot.send_message(
+                        chat_id=state.chat_id,
+                        message_thread_id=state.topic_id,
+                        text=ui.rules_message_text(),
+                        parse_mode=ParseMode.HTML,
+                    )
+                )
+                if msg is not None:
+                    state.track_message(msg.message_id)
+                    manager.save_buckshot(state)
+            return
+        if callback.kind == callbacks.QUIT:
+            if state.status != GameStatus.ACTIVE:
+                await query.answer()
+                return
+            result = engine.leave_game(state, user.id)
+            if not result.ok:
+                await query.answer()
+                return
+            await query.answer()
+            await _after_action(context, state, result)
+            return
         if state.status != GameStatus.LOBBY:
             await query.answer()
             return
@@ -358,6 +421,8 @@ async def _dispatch(update, context, state: GameState, callback) -> None:
                 return
             await _delete_ids(context.bot, state)
             await send_game_messages(context.bot, state)
+            await _publish_events(context.bot, state, result)
+            await _refresh_persistent_ui(context.bot, state)
             manager.save_buckshot(state)
             return
         await query.answer()
@@ -415,14 +480,9 @@ async def _dispatch(update, context, state: GameState, callback) -> None:
 
 
 async def _lobby_announce(context, state: GameState, result: ActionResult) -> None:
-    text = result.announcements[-1] if result.announcements else ui.announce_placeholder()
-    if state.announce_message_id is not None:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=state.chat_id, message_id=state.announce_message_id, text=text
-            )
-        except Exception:
-            pass
+    await sequencer.send_sequence(
+        context.bot, state, _outgoing_for_events(state, result.events)
+    )
     if state.lobby_message_id is not None:
         try:
             await context.bot.edit_message_text(
