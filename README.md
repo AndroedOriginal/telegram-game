@@ -84,10 +84,10 @@ Cartridges are blank or live; the real order is hidden. Last player with HP
 wins. Dead players leave the turn rotation and cannot be shot, but their
 inventory remains stealable with Adrenaline.
 
-Lobby: `/buckshot` → rules (collapsed quote), join/leave, start. Persistent
-in-game UI is the information message (turn order, HP, **Правила / Выйти**)
-and **Действия**. Dealer commentary and 🔈 events are each sent as separate
-messages with a short delay.
+Lobby: `/buckshot` → rules (collapsed quote), join/leave, start. In-game UI is
+four persistent messages that are edited in place: information
+(**Правила / Выйти**), dealer commentary, **Действия**, and one 🔈 status
+line. Temporary target/item pickers may appear and are deleted afterwards.
 
 ## Project structure
 
@@ -178,9 +178,9 @@ Inside the configured chat, open the matching forum topic and use:
 
 Chess Royale UI is three persistent messages: information
 (with **Правила / Выйти / Ничья**), the board, and **Ходы**.
-Buckshot Roulette keeps a persistent information message (turn order + HP +
-**Правила / Выйти**) and **Действия**. Dealer commentary and 🔈 events are
-separate sequential messages, not edits of a single log.
+Buckshot Roulette keeps persistent information (**Правила / Выйти**), dealer
+commentary, **Действия**, and one 🔈 status line. Those messages are edited
+when the state changes; only temporary pickers are extra messages.
 
 Every game is keyed by `(chat_id, topic_id)`, so Chess Royale and Buckshot
 Roulette (and multiple Chess Royale topics) run independently.

@@ -121,6 +121,8 @@ def state_to_json(state: GameState) -> str:
         },
         "last_no_space": list(state.last_no_space),
         "round_intro_pending": state.round_intro_pending,
+        "round_item_count": state.round_item_count,
+        "status_message_id": state.status_message_id,
     }
     return json.dumps(payload)
 
@@ -166,6 +168,8 @@ def state_from_json(raw: str) -> GameState:
         last_item_drops=drops,
         last_no_space=set(payload.get("last_no_space") or []),
         round_intro_pending=payload.get("round_intro_pending", False),
+        round_item_count=payload.get("round_item_count", 0),
+        status_message_id=payload.get("status_message_id") or payload.get("announce_message_id"),
     )
 
 

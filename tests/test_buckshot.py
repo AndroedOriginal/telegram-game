@@ -73,9 +73,10 @@ def test_hp_and_round_creation():
     state = _start("a", "b", rng=random.Random(2))
     assert state.round_number == 1
     assert 2 <= state.round_max_hp <= 4
+    assert 2 <= state.round_item_count <= 5
     for player in state.active_players():
         assert player.hp == state.round_max_hp
-        assert 2 <= len(state.last_item_drops[player.user_id]) <= 5
+        assert len(state.last_item_drops[player.user_id]) == state.round_item_count
         assert len(player.inventory) <= MAX_INVENTORY
 
 
@@ -97,6 +98,8 @@ def test_inventory_cap_records_no_space():
     engine._deal_items(state, random.Random(0))
     assert 1 in state.last_no_space
     assert len(a.inventory) == MAX_INVENTORY
+    assert len(state.last_item_drops[1]) == 0
+    assert 2 <= state.round_item_count <= 5
 
 
 def test_shotgun_always_has_blank_and_live_and_hidden_order():
@@ -571,12 +574,18 @@ def test_info_message_has_rules_and_leave_buttons():
     assert quit_cb.kind == QUIT
 
 
-def test_sequencer_sends_separate_messages_in_order():
+def test_sequencer_edits_persistent_slots_in_order():
     import asyncio
     import inspect
-    from types import SimpleNamespace
 
-    from bot.buckshot.sequencer import EVENT_DELAY_SECONDS, OutgoingMessage, send_sequence
+    from bot.buckshot.sequencer import (
+        EVENT_DELAY_SECONDS,
+        SLOT_COMMENTARY,
+        SLOT_STATUS,
+        UiUpdate,
+        apply_sequence,
+        slot_message_id,
+    )
 
     async def _run():
         sleeps: list[float] = []
@@ -584,34 +593,31 @@ def test_sequencer_sends_separate_messages_in_order():
         async def fake_sleep(delay: float) -> None:
             sleeps.append(delay)
 
-        sent: list[str] = []
+        edits: list[tuple[str, int | None, str]] = []
 
-        class Bot:
-            async def send_message(self, **kwargs):
-                sent.append(kwargs["text"])
-                return SimpleNamespace(message_id=len(sent) + 40)
+        async def apply(update: UiUpdate) -> None:
+            edits.append((update.slot, slot_message_id(state, update.slot), update.text))
 
         state = GameState(game_id=1, chat_id=-100, topic_id=9)
-        ids = await send_sequence(
-            Bot(),
-            state,
+        state.status_message_id = 70
+        state.commentary_message_id = 80
+        await apply_sequence(
             [
-                OutgoingMessage("🔈 @a стреляет в @b.", parse_mode=None),
-                OutgoingMessage("☠️ выстрел.", parse_mode=None),
-                OutgoingMessage("🔈 @b теряет одно ⚡️хп.", parse_mode=None),
+                UiUpdate(SLOT_STATUS, "🔈 @a стреляет в @b.", parse_mode=None),
+                UiUpdate(SLOT_STATUS, "🔈 ☠️ выстрел.", parse_mode=None),
+                UiUpdate(SLOT_COMMENTARY, "@b берет предметы:", parse_mode=None),
             ],
             delay=0.5,
             sleep=fake_sleep,
+            apply=apply,
         )
-        assert sent == [
-            "🔈 @a стреляет в @b.",
-            "☠️ выстрел.",
-            "🔈 @b теряет одно ⚡️хп.",
+        assert edits == [
+            (SLOT_STATUS, 70, "🔈 @a стреляет в @b."),
+            (SLOT_STATUS, 70, "🔈 ☠️ выстрел."),
+            (SLOT_COMMENTARY, 80, "@b берет предметы:"),
         ]
         assert sleeps == [0.5, 0.5]
-        assert ids == [41, 42, 43]
-        assert state.tracked_message_ids == ids
-        assert inspect.iscoroutinefunction(send_sequence)
+        assert inspect.iscoroutinefunction(apply_sequence)
         assert EVENT_DELAY_SECONDS > 0
 
     asyncio.run(_run())
@@ -625,21 +631,19 @@ def test_sequencer_is_async_and_does_not_block():
     source = inspect.getsource(seq)
     assert "time.sleep" not in source
     assert "asyncio.sleep" in source
-    assert inspect.iscoroutinefunction(seq.send_sequence)
+    assert inspect.iscoroutinefunction(seq.apply_sequence)
+    assert "send_message" not in source or "edit" in source
 
 
 def test_event_messages_are_tracked_for_cleanup():
     state = _start("a", "b", rng=random.Random(33))
-    state.track_message(101)
-    state.track_message(102)
-    state.track_message(103)
+    state.info_message_id = 11
+    state.commentary_message_id = 12
+    state.actions_message_id = 13
+    state.status_message_id = 14
     engine.end_game(state)
     ids = state.ui_message_ids()
-    assert 101 in ids and 102 in ids and 103 in ids
-    state.tracked_message_ids = []
-    state.info_message_id = None
-    state.actions_message_id = None
-    assert state.ui_message_ids() == []
+    assert ids == [11, 12, 13, 14]
 
 
 def test_commentary_events_render_as_separate_html_messages():
@@ -658,3 +662,84 @@ def test_commentary_events_render_as_separate_html_messages():
     assert "берет предметы" in item_html[1]
     shotgun = next(event for event in result.events if event.kind == EventKind.SHOTGUN)
     assert "Заряжается дробовик" in (render_event(state, shotgun) or "")
+
+
+def test_shared_item_count_for_every_alive_player():
+    for seed in range(12):
+        state = _start("a", "b", "c", rng=random.Random(seed))
+        n = state.round_item_count
+        assert 2 <= n <= 5
+        received = [len(state.last_item_drops[p.user_id]) for p in state.active_players()]
+        assert received == [n, n, n]
+
+
+def test_shared_item_count_respects_inventory_cap():
+    state = _start("a", "b", rng=random.Random(5))
+    a = state.get_player(1)
+    b = state.get_player(2)
+    a.inventory = [ItemType.BEER] * 7
+    b.inventory = []
+    engine._deal_items(state, random.Random(6))
+    n = state.round_item_count
+    assert 2 <= n <= 5
+    assert len(state.last_item_drops[a.user_id]) == min(n, 1)
+    assert len(state.last_item_drops[b.user_id]) == n
+    assert len(a.inventory) == MAX_INVENTORY
+    assert a.user_id in state.last_no_space
+    assert b.user_id not in state.last_no_space
+
+
+def test_persistent_slots_are_per_game_and_topic():
+    from bot.buckshot.sequencer import SLOT_ACTIONS, SLOT_COMMENTARY, SLOT_INFO, SLOT_STATUS, slot_message_id
+
+    first = GameState(game_id=1, chat_id=-100, topic_id=1)
+    second = GameState(game_id=2, chat_id=-100, topic_id=2)
+    first.info_message_id = 11
+    first.commentary_message_id = 12
+    first.actions_message_id = 13
+    first.status_message_id = 14
+    second.info_message_id = 21
+    second.commentary_message_id = 22
+    second.actions_message_id = 23
+    second.status_message_id = 24
+    assert slot_message_id(first, SLOT_INFO) == 11
+    assert slot_message_id(first, SLOT_COMMENTARY) == 12
+    assert slot_message_id(first, SLOT_ACTIONS) == 13
+    assert slot_message_id(first, SLOT_STATUS) == 14
+    assert slot_message_id(second, SLOT_INFO) == 21
+    assert slot_message_id(second, SLOT_STATUS) == 24
+    assert slot_message_id(first, SLOT_INFO) != slot_message_id(second, SLOT_INFO)
+
+
+def test_status_and_commentary_events_target_persistent_slots():
+    from bot.buckshot.handlers import _updates_for_events
+    from bot.buckshot.sequencer import SLOT_COMMENTARY, SLOT_STATUS
+
+    state = _start("a", "b", rng=random.Random(35))
+    actor = state.current_player()
+    other = next(p for p in state.active_players() if p.user_id != actor.user_id)
+    other.hp = 3
+    state.shotgun.cartridges = [True]
+    result = engine.shoot(state, actor.user_id, other.user_id, state.action_seq)
+    updates = _updates_for_events(state, result.events)
+    assert any(u.slot == SLOT_STATUS for u in updates)
+    assert all(u.slot in (SLOT_STATUS, SLOT_COMMENTARY) for u in updates)
+    assert len([u for u in updates if u.slot == SLOT_STATUS]) >= 2
+
+
+def test_temporary_pending_ui_does_not_replace_persistent_slots():
+    from bot.buckshot.handlers import _pending_markup
+
+    state = _start("a", "b", rng=random.Random(36))
+    state.info_message_id = 1
+    state.commentary_message_id = 2
+    state.actions_message_id = 3
+    state.status_message_id = 4
+    engine.open_shoot(state, state.current_player().user_id, state.action_seq)
+    caption, markup = _pending_markup(state)
+    assert caption == "Цель:"
+    assert markup is not None
+    assert state.info_message_id == 1
+    assert state.commentary_message_id == 2
+    assert state.actions_message_id == 3
+    assert state.status_message_id == 4

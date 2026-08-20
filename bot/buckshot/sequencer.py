@@ -1,7 +1,7 @@
-"""Async sequential message sender for Buckshot Roulette.
+"""Async sequential UI updates for Buckshot Roulette.
 
-Dealer commentary and 🔈 status events are each their own Telegram message.
-Delays use ``asyncio.sleep`` so other chats/topics keep running.
+Persistent slots (info / commentary / status / actions) are EDITED in
+order. Delays use ``asyncio.sleep`` so other chats keep running.
 
 Callers must hold the per-topic game lock so sequences cannot interleave.
 """
@@ -14,43 +14,68 @@ from telegram.constants import ParseMode
 
 from .models import GameState
 
-# One place to tune pacing between sequential event messages.
+# One place to tune pacing between sequential slot edits.
 EVENT_DELAY_SECONDS = 0.8
+
+SLOT_INFO = "info"
+SLOT_COMMENTARY = "commentary"
+SLOT_ACTIONS = "actions"
+SLOT_STATUS = "status"
 
 
 @dataclass(frozen=True)
-class OutgoingMessage:
+class UiUpdate:
+    slot: str
     text: str
     parse_mode: str | None = ParseMode.HTML
+    markup: object | None = None
 
 
-async def send_sequence(
-    bot,
-    state: GameState,
-    messages: list[OutgoingMessage],
+def slot_message_id(state: GameState, slot: str) -> int | None:
+    """Return this game's message id for ``slot``. Never reads another game."""
+
+    if slot == SLOT_INFO:
+        return state.info_message_id
+    if slot == SLOT_COMMENTARY:
+        return state.commentary_message_id
+    if slot == SLOT_ACTIONS:
+        return state.actions_message_id
+    if slot == SLOT_STATUS:
+        return state.status_message_id or state.announce_message_id
+    raise ValueError(f"unknown slot {slot}")
+
+
+def set_slot_message_id(state: GameState, slot: str, message_id: int | None) -> None:
+    if slot == SLOT_INFO:
+        state.info_message_id = message_id
+    elif slot == SLOT_COMMENTARY:
+        state.commentary_message_id = message_id
+    elif slot == SLOT_ACTIONS:
+        state.actions_message_id = message_id
+    elif slot == SLOT_STATUS:
+        state.status_message_id = message_id
+        state.announce_message_id = message_id
+    else:
+        raise ValueError(f"unknown slot {slot}")
+    state.track_message(message_id)
+
+
+async def apply_sequence(
+    updates: list[UiUpdate],
     *,
     delay: float | None = None,
     sleep=asyncio.sleep,
-) -> list[int]:
-    """Send ``messages`` in order with ``delay`` seconds between them.
+    apply,
+) -> None:
+    """Apply ``updates`` in order with ``delay`` seconds between them.
 
-    Each sent message is tracked on ``state`` for later cleanup.
+    ``apply`` is an async callback ``apply(update: UiUpdate) -> None``.
+    It must edit the caller's own game-state message ids.
     """
-    if not messages:
-        return []
+    if not updates:
+        return
     gap = EVENT_DELAY_SECONDS if delay is None else delay
-    ids: list[int] = []
-    for index, message in enumerate(messages):
+    for index, update in enumerate(updates):
         if index:
             await sleep(gap)
-        sent = await bot.send_message(
-            chat_id=state.chat_id,
-            message_thread_id=state.topic_id,
-            text=message.text,
-            parse_mode=message.parse_mode,
-        )
-        if sent is None:
-            continue
-        ids.append(sent.message_id)
-        state.track_message(sent.message_id)
-    return ids
+        await apply(update)

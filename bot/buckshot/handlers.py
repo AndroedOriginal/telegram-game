@@ -17,7 +17,7 @@ from . import sequencer
 from . import ui
 from .engine import ActionResult
 from .models import EventKind, GameState, GameStatus, PendingKind
-from .sequencer import OutgoingMessage
+from .sequencer import SLOT_ACTIONS, SLOT_COMMENTARY, SLOT_INFO, SLOT_STATUS, UiUpdate
 from .texts import not_enough_players
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,7 @@ async def _delete_ids(bot, state: GameState) -> None:
     state.lobby_message_id = None
     state.start_message_id = None
     state.announce_message_id = None
+    state.status_message_id = None
     state.magnify_message_id = None
 
 
@@ -121,27 +122,70 @@ def _pending_markup(state: GameState):
     return None, None
 
 
-def _outgoing_for_events(state: GameState, events) -> list[OutgoingMessage]:
-    messages: list[OutgoingMessage] = []
+def _updates_for_events(state: GameState, events) -> list[UiUpdate]:
+    updates: list[UiUpdate] = []
     for event in events:
         text = ui.render_event(state, event)
         if not text:
             continue
-        parse_mode = None if event.kind == EventKind.STATUS else ParseMode.HTML
-        messages.append(OutgoingMessage(text=text, parse_mode=parse_mode))
-    return messages
+        if event.kind == EventKind.STATUS:
+            updates.append(UiUpdate(slot=SLOT_STATUS, text=text, parse_mode=None))
+        else:
+            updates.append(UiUpdate(slot=SLOT_COMMENTARY, text=text, parse_mode=ParseMode.HTML))
+    return updates
+
+
+async def _apply_ui_update(bot, state: GameState, update: UiUpdate) -> None:
+    message_id = sequencer.slot_message_id(state, update.slot)
+    markup = update.markup
+    if update.slot == SLOT_INFO and markup is None:
+        markup = ui.info_keyboard(state)
+    elif update.slot == SLOT_ACTIONS and markup is None:
+        markup = ui.actions_keyboard(state)
+    if message_id is None:
+        new_id = await _edit_or_send(
+            bot,
+            state.chat_id,
+            None,
+            state.topic_id,
+            update.text,
+            markup=markup,
+            parse_mode=update.parse_mode,
+        )
+        if new_id:
+            sequencer.set_slot_message_id(state, update.slot, new_id)
+        return
+    try:
+        await telegram_retry(
+            lambda: bot.edit_message_text(
+                chat_id=state.chat_id,
+                message_id=message_id,
+                text=update.text,
+                reply_markup=markup,
+                parse_mode=update.parse_mode,
+            )
+        )
+    except BadRequest:
+        logger.warning("Could not edit persistent %s message %s", update.slot, message_id)
 
 
 async def _publish_events(bot, state: GameState, result: ActionResult) -> None:
+    async def apply(update: UiUpdate) -> None:
+        await _apply_ui_update(bot, state, update)
+
     events = list(result.events)
     split = result.ui_sync_at
     if split is None or split < 0 or split > len(events):
-        await sequencer.send_sequence(bot, state, _outgoing_for_events(state, events))
+        await sequencer.apply_sequence(_updates_for_events(state, events), apply=apply)
         return
-    await sequencer.send_sequence(bot, state, _outgoing_for_events(state, events[:split]))
+    await sequencer.apply_sequence(_updates_for_events(state, events[:split]), apply=apply)
     if state.status == GameStatus.ACTIVE:
-        await _refresh_persistent_ui(bot, state)
-    await sequencer.send_sequence(bot, state, _outgoing_for_events(state, events[split:]))
+        await _apply_ui_update(
+            bot,
+            state,
+            UiUpdate(slot=SLOT_INFO, text=ui.info_message_html(state), markup=ui.info_keyboard(state)),
+        )
+    await sequencer.apply_sequence(_updates_for_events(state, events[split:]), apply=apply)
 
 
 async def _refresh_persistent_ui(bot, state: GameState) -> None:
@@ -255,10 +299,17 @@ async def send_lobby_messages(context, state: GameState) -> None:
     state.rules_message_id = rules.message_id
     state.lobby_message_id = lobby.message_id
     state.start_message_id = start.message_id
-    state.announce_message_id = None
+    announce = await bot.send_message(
+        chat_id=state.chat_id,
+        message_thread_id=state.topic_id,
+        text=ui.announce_placeholder(),
+    )
+    state.announce_message_id = announce.message_id
+    state.status_message_id = announce.message_id
     state.track_message(rules.message_id)
     state.track_message(lobby.message_id)
     state.track_message(start.message_id)
+    state.track_message(announce.message_id)
 
 
 async def send_game_messages(bot, state: GameState) -> None:
@@ -269,17 +320,32 @@ async def send_game_messages(bot, state: GameState) -> None:
         reply_markup=ui.info_keyboard(state),
         parse_mode=ParseMode.HTML,
     )
+    commentary = await bot.send_message(
+        chat_id=state.chat_id,
+        message_thread_id=state.topic_id,
+        text="\u200b",
+        parse_mode=ParseMode.HTML,
+    )
     actions = await bot.send_message(
         chat_id=state.chat_id,
         message_thread_id=state.topic_id,
         text=ui.actions_message_text(),
         reply_markup=ui.actions_keyboard(state),
     )
+    status = await bot.send_message(
+        chat_id=state.chat_id,
+        message_thread_id=state.topic_id,
+        text=ui.announce_placeholder(),
+    )
     state.info_message_id = info.message_id
-    state.commentary_message_id = None
+    state.commentary_message_id = commentary.message_id
     state.actions_message_id = actions.message_id
+    state.status_message_id = status.message_id
+    state.announce_message_id = status.message_id
     state.track_message(info.message_id)
+    state.track_message(commentary.message_id)
     state.track_message(actions.message_id)
+    state.track_message(status.message_id)
 
 
 async def cmd_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -364,18 +430,6 @@ async def _dispatch(update, context, state: GameState, callback) -> None:
     if isinstance(callback, callbacks.LobbyCallback):
         if callback.kind == callbacks.RULES:
             await query.answer(text=ui.rules_alert_text(), show_alert=True)
-            if state.status == GameStatus.ACTIVE:
-                msg = await telegram_retry(
-                    lambda: context.bot.send_message(
-                        chat_id=state.chat_id,
-                        message_thread_id=state.topic_id,
-                        text=ui.rules_message_text(),
-                        parse_mode=ParseMode.HTML,
-                    )
-                )
-                if msg is not None:
-                    state.track_message(msg.message_id)
-                    manager.save_buckshot(state)
             return
         if callback.kind == callbacks.QUIT:
             if state.status != GameStatus.ACTIVE:
@@ -480,9 +534,10 @@ async def _dispatch(update, context, state: GameState, callback) -> None:
 
 
 async def _lobby_announce(context, state: GameState, result: ActionResult) -> None:
-    await sequencer.send_sequence(
-        context.bot, state, _outgoing_for_events(state, result.events)
-    )
+    async def apply(update: UiUpdate) -> None:
+        await _apply_ui_update(context.bot, state, update)
+
+    await sequencer.apply_sequence(_updates_for_events(state, result.events), apply=apply)
     if state.lobby_message_id is not None:
         try:
             await context.bot.edit_message_text(

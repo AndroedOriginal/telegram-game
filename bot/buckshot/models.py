@@ -188,6 +188,8 @@ class GameState:
     last_item_drops: dict[int, list[ItemType]] = field(default_factory=dict)
     last_no_space: set[int] = field(default_factory=set)
     round_intro_pending: bool = False
+    round_item_count: int = 0
+    status_message_id: int | None = None
 
     kind: str = KIND
 
@@ -201,6 +203,7 @@ class GameState:
             self.info_message_id,
             self.commentary_message_id,
             self.actions_message_id,
+            self.status_message_id,
             self.rules_message_id,
             self.lobby_message_id,
             self.start_message_id,

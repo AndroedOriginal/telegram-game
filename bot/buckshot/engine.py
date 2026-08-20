@@ -124,21 +124,22 @@ def leave_lobby(state: GameState, user_id: int) -> ActionResult:
 def _deal_items(state: GameState, rng: random.Random) -> None:
     alive = state.active_players()
     pool = allowed_item_types(len(alive))
+    count = rng.randint(MIN_ITEMS_PER_ROUND, MAX_ITEMS_PER_ROUND)
+    state.round_item_count = count
     state.last_item_drops = {}
     state.last_no_space = set()
     for player in alive:
-        count = rng.randint(MIN_ITEMS_PER_ROUND, MAX_ITEMS_PER_ROUND)
         received: list[ItemType] = []
         no_space = False
         for _ in range(count):
             item = rng.choice(pool)
             if len(player.inventory) >= MAX_INVENTORY:
                 no_space = True
-                break
+                continue
             player.inventory.append(item)
             received.append(item)
         state.last_item_drops[player.user_id] = received
-        if no_space or (count > 0 and len(received) < count and len(player.inventory) >= MAX_INVENTORY):
+        if no_space or len(received) < count:
             state.last_no_space.add(player.user_id)
 
 
