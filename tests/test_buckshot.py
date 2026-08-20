@@ -743,3 +743,41 @@ def test_temporary_pending_ui_does_not_replace_persistent_slots():
     assert state.commentary_message_id == 2
     assert state.actions_message_id == 3
     assert state.status_message_id == 4
+
+
+def test_game_placeholders_are_nonempty():
+    from bot.buckshot.ui import actions_message_text, announce_placeholder, commentary_placeholder
+
+    assert commentary_placeholder().strip()
+    assert announce_placeholder().strip()
+    assert actions_message_text().strip()
+    assert commentary_placeholder() != "\u200b"
+
+
+def test_send_game_messages_sends_four_gameplay_slots():
+    import asyncio
+    from types import SimpleNamespace
+
+    from bot.buckshot.handlers import send_game_messages
+
+    sent: list[str] = []
+
+    class Bot:
+        async def send_message(self, **kwargs):
+            text = kwargs["text"]
+            assert text.strip(), "Telegram rejects empty gameplay messages"
+            sent.append(text)
+            return SimpleNamespace(message_id=len(sent) + 50)
+
+    lobby = _state("a", "b")
+    result = engine.start_game(lobby, random.Random(41))
+    asyncio.run(send_game_messages(Bot(), lobby, result))
+    assert len(sent) == 4
+    assert "Информация по игре" in sent[0]
+    assert "берет предметы" in sent[1]
+    assert "Действия" in sent[2]
+    assert sent[3].strip()
+    assert lobby.info_message_id == 51
+    assert lobby.commentary_message_id == 52
+    assert lobby.actions_message_id == 53
+    assert lobby.status_message_id == 54

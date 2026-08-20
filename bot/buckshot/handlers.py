@@ -122,6 +122,25 @@ def _pending_markup(state: GameState):
     return None, None
 
 
+def _nonempty_text(text: str | None) -> str:
+    if text and text.strip():
+        return text
+    return "—"
+
+
+async def _send_slot_message(bot, state: GameState, slot: str, text: str, markup=None, parse_mode=ParseMode.HTML):
+    text = _nonempty_text(text)
+    msg = await bot.send_message(
+        chat_id=state.chat_id,
+        message_thread_id=state.topic_id,
+        text=text,
+        reply_markup=markup,
+        parse_mode=parse_mode,
+    )
+    sequencer.set_slot_message_id(state, slot, msg.message_id)
+    return msg
+
+
 def _updates_for_events(state: GameState, events) -> list[UiUpdate]:
     updates: list[UiUpdate] = []
     for event in events:
@@ -136,6 +155,7 @@ def _updates_for_events(state: GameState, events) -> list[UiUpdate]:
 
 
 async def _apply_ui_update(bot, state: GameState, update: UiUpdate) -> None:
+    text = _nonempty_text(update.text)
     message_id = sequencer.slot_message_id(state, update.slot)
     markup = update.markup
     if update.slot == SLOT_INFO and markup is None:
@@ -148,7 +168,7 @@ async def _apply_ui_update(bot, state: GameState, update: UiUpdate) -> None:
             state.chat_id,
             None,
             state.topic_id,
-            update.text,
+            text,
             markup=markup,
             parse_mode=update.parse_mode,
         )
@@ -160,7 +180,7 @@ async def _apply_ui_update(bot, state: GameState, update: UiUpdate) -> None:
             lambda: bot.edit_message_text(
                 chat_id=state.chat_id,
                 message_id=message_id,
-                text=update.text,
+                text=text,
                 reply_markup=markup,
                 parse_mode=update.parse_mode,
             )
@@ -312,40 +332,38 @@ async def send_lobby_messages(context, state: GameState) -> None:
     state.track_message(announce.message_id)
 
 
-async def send_game_messages(bot, state: GameState) -> None:
-    info = await bot.send_message(
-        chat_id=state.chat_id,
-        message_thread_id=state.topic_id,
-        text=ui.info_message_html(state),
-        reply_markup=ui.info_keyboard(state),
-        parse_mode=ParseMode.HTML,
+async def send_game_messages(bot, state: GameState, result: ActionResult | None = None) -> None:
+    commentary_text = ui.commentary_placeholder()
+    status_text = ui.announce_placeholder()
+    if result is not None:
+        first_commentary = next(
+            (
+                ui.render_event(state, event)
+                for event in result.events
+                if event.kind != EventKind.STATUS and ui.render_event(state, event)
+            ),
+            None,
+        )
+        first_status = next(
+            (event.text for event in result.events if event.kind == EventKind.STATUS and event.text),
+            None,
+        )
+        if first_commentary:
+            commentary_text = first_commentary
+        if first_status:
+            status_text = first_status
+
+    slots = (
+        (SLOT_INFO, ui.info_message_html(state), ui.info_keyboard(state), ParseMode.HTML),
+        (SLOT_COMMENTARY, commentary_text, None, ParseMode.HTML),
+        (SLOT_ACTIONS, ui.actions_message_text(), ui.actions_keyboard(state), None),
+        (SLOT_STATUS, status_text, None, None),
     )
-    commentary = await bot.send_message(
-        chat_id=state.chat_id,
-        message_thread_id=state.topic_id,
-        text="\u200b",
-        parse_mode=ParseMode.HTML,
-    )
-    actions = await bot.send_message(
-        chat_id=state.chat_id,
-        message_thread_id=state.topic_id,
-        text=ui.actions_message_text(),
-        reply_markup=ui.actions_keyboard(state),
-    )
-    status = await bot.send_message(
-        chat_id=state.chat_id,
-        message_thread_id=state.topic_id,
-        text=ui.announce_placeholder(),
-    )
-    state.info_message_id = info.message_id
-    state.commentary_message_id = commentary.message_id
-    state.actions_message_id = actions.message_id
-    state.status_message_id = status.message_id
-    state.announce_message_id = status.message_id
-    state.track_message(info.message_id)
-    state.track_message(commentary.message_id)
-    state.track_message(actions.message_id)
-    state.track_message(status.message_id)
+    for slot, text, markup, parse_mode in slots:
+        try:
+            await _send_slot_message(bot, state, slot, text, markup=markup, parse_mode=parse_mode)
+        except Exception:
+            logger.exception("Failed to send Buckshot %s message", slot)
 
 
 async def cmd_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -473,10 +491,13 @@ async def _dispatch(update, context, state: GameState, callback) -> None:
             if not result.ok:
                 manager.save_buckshot(state)
                 return
-            await _delete_ids(context.bot, state)
-            await send_game_messages(context.bot, state)
-            await _publish_events(context.bot, state, result)
-            await _refresh_persistent_ui(context.bot, state)
+            try:
+                await _delete_ids(context.bot, state)
+                await send_game_messages(context.bot, state, result)
+                await _publish_events(context.bot, state, result)
+                await _refresh_persistent_ui(context.bot, state)
+            except Exception:
+                logger.exception("Failed to publish Buckshot game UI")
             manager.save_buckshot(state)
             return
         await query.answer()

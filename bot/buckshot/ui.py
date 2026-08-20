@@ -86,6 +86,10 @@ def announce_placeholder() -> str:
     return "\U0001f508"
 
 
+def commentary_placeholder() -> str:
+    return "—"
+
+
 def _prefix(player: Player, current_id: int | None) -> str:
     marks = ""
     if current_id is not None and player.user_id == current_id and player.is_active:
